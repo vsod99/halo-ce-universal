@@ -469,6 +469,17 @@ LONG WINAPI halo_linux_InterlockedCompareExchange(LPLONG destination, LONG excha
 
 /* ---------- threads */
 
+/* a thread's least stack. The game asks for 16 KB (its cache, decompression
+and input threads); a desktop is given a comfortable 1 MB. On the original
+Xbox a thread's stack is the kernel's, all of it physical memory, so the
+game's sizes stand with room for the port's code: its threads use under
+2 KB (measured in xemu, October 2026) */
+#ifdef HALO_XBOX
+#define THREAD_MINIMUM_STACK 0x10000
+#else
+#define THREAD_MINIMUM_STACK 0x100000
+#endif
+
 struct platform_thread
 {
 	struct platform_handle *handle;
@@ -561,8 +572,7 @@ HANDLE WINAPI CreateThread(LPSECURITY_ATTRIBUTES attributes, DWORD stack_size,
 
 	pthread_attr_init(&thread_attributes);
 	pthread_attr_setdetachstate(&thread_attributes, PTHREAD_CREATE_DETACHED);
-	/* Xbox stacks are small; give the host a comfortable minimum */
-	pthread_attr_setstacksize(&thread_attributes, stack_size > 0x100000 ? stack_size : 0x100000);
+	pthread_attr_setstacksize(&thread_attributes, stack_size > THREAD_MINIMUM_STACK ? stack_size : THREAD_MINIMUM_STACK);
 	if (pthread_create(&thread->thread, &thread_attributes, thread_main, thread) != 0)
 	{
 		pthread_attr_destroy(&thread_attributes);
