@@ -280,7 +280,34 @@ def doctor(config: dict) -> int:
         ok &= present or name == "console.eeprom_path"  # xemu makes an EEPROM if none
         print(f"{'ok ' if present else 'MISSING'} {name}: {path or '(not set)'}")
     print(f"memory: {config['console'].get('memory', '128')} MB")
+    bootrom = config["console"].get("bootrom_path")
+    if bootrom and expand(bootrom).is_file():
+        ok &= check_bootrom(expand(bootrom))
     return 0 if ok else 1
+
+
+# the MCPX 1.0 boot ROM xemu expects, and the common bad dump of it
+# (xemu.app/docs/required-files)
+MCPX_GOOD_MD5 = "d49c52a4102f6df7bcf8d0617ac475ed"
+MCPX_BAD_MD5 = "196a5f59a13382c185636e691d6c323d"
+
+
+def check_bootrom(path: Path) -> bool:
+    import hashlib
+    data = path.read_bytes()
+    digest = hashlib.md5(data).hexdigest()
+    if digest == MCPX_GOOD_MD5:
+        print("ok  MCPX boot ROM: the 1.0 ROM xemu expects")
+        return True
+    if digest == MCPX_BAD_MD5:
+        print("BAD MCPX boot ROM: the known slightly corrupted dump; dump it again")
+    elif len(data) != 512:
+        print(f"BAD MCPX boot ROM: {len(data)} bytes, not 512")
+    else:
+        bounds = "right" if data[:2] == b"\x33\xc0" and data[-2:] == b"\x02\xee" else "wrong"
+        print(f"??? MCPX boot ROM: unknown checksum {digest} (first/last bytes {bounds}; "
+              "a 1.1 ROM or a bad dump)")
+    return False
 
 
 def main() -> None:
