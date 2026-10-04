@@ -21,6 +21,17 @@ compile_commands.json
 *.pdb
 xbox/
 !source/**/xbox/
+!port/xbox/
+
+# The Xbox port's machine-local paths (tools/xbox_dev.py), and what nxdk's
+# make writes beside the sources
+port/xbox/xemu.local.toml
+port/xbox/**/bin/
+port/xbox/**/*.obj
+port/xbox/**/*.d
+port/xbox/**/*.iso
+port/xbox/**/*.lib
+port/xbox/**/*.exe.manifest
 
 # Locally extracted proprietary game data (never commit)
 assets/

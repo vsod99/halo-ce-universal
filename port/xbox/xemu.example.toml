@@ -1,0 +1,15 @@
+# Copy to xemu.local.toml (not committed) and fill in. Paths may start with ~.
+
+[tools]
+nxdk = "~/source/repos/nxdk"                         # git clone --recursive https://github.com/XboxDev/nxdk
+llvm_bin = "/opt/homebrew/opt/llvm/bin"              # brew install llvm
+lld_bin = "/opt/homebrew/opt/lld/bin"                # brew install lld
+xemu = "/Applications/xemu.app/Contents/MacOS/xemu"  # brew install --cask xemu
+
+[console]
+# Dumped from your own console; never committed.
+bootrom_path = ""    # MCPX boot ROM (512 bytes)
+flashrom_path = ""   # flash BIOS image
+eeprom_path = ""     # optional: xemu makes one if empty
+hdd_path = ""        # hard disk image (xemu's prebuilt blank image is fine)
+memory = "128"       # "64" (retail) or "128" (upgraded)
