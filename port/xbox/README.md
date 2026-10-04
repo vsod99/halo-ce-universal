@@ -21,6 +21,22 @@ Microsoft SDK). Until the console is ready, everything runs in
    ([xemu-hdd-image](https://github.com/xemu-project/xemu-hdd-image/releases)).
 4. `python3 tools/xbox_dev.py doctor` checks it.
 
+## The game's build
+
+`python3 configure.py` adds the Xbox build when it finds nxdk (the path in
+`xemu.local.toml`, or `--nxdk`); `tools/xbox_build.py` writes it.
+
+    ninja xbox-game      # the game's units alone
+    ninja xbox           # build/xbox/halo/bin/default.xbe
+
+The game's units are the other ports': nxdk's clang targets the same
+Microsoft ABI as the Windows build, so they take `include/halo_xbox_prefix.h`
+(after the Windows prefix) and the Linux build's C runtime wrappers over
+nxdk's C library, pdclib, with `include/` standing in for the headers pdclib
+lacks. The platform layer is the Linux build's units that implement the Xbox
+SDK (`port.json`) and `src/`'s own; `src/nxdk_*.c` alone see nxdk's
+Windows and kernel headers.
+
 ## The loop
 
     python3 tools/xbox_dev.py run port/xbox/probe            # opens xemu's window

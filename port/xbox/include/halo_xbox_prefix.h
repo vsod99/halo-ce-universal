@@ -1,0 +1,78 @@
+/*
+HALO_XBOX_PREFIX.H
+
+Force-included ahead of every game unit and every Xbox-facing platform unit
+in the original Xbox build (clang -include; tools/xbox_build.py). The units
+that talk to nxdk itself (port/xbox/src/nxdk_*.c) never see it.
+
+nxdk's target (i386-pc-win32) is clang's Microsoft target, as the Windows
+build's is, so this follows halo_windows_prefix.h. The C library is nxdk's
+pdclib instead of Microsoft's, so the game gets the Linux build's C runtime
+wrappers (port/linux/include), which add the MSVC names to a C library
+without them.
+*/
+
+#ifndef __HALO_XBOX_PREFIX_H
+#define __HALO_XBOX_PREFIX_H
+
+#if !defined(_M_IX86)
+#error the Xbox port targets 32-bit x86
+#endif
+
+#define HALO_XBOX 1
+
+/* ---------- XDK architecture selection */
+
+#define _X86_ 1
+#define _STDCALL_SUPPORTED 1
+#define _USE_MATH_DEFINES
+
+/* ---------- the C library's C99 spellings in gnu89 units */
+
+#define restrict __restrict
+
+/* ---------- MSVC inline semantics
+
+As on Windows: clang's Microsoft target gives C `__inline` functions MSVC's
+COMDAT linkage, and the build supplies the copies MSVC would have left
+(port/linux/game/msvc_comdat.c, tools/windows_build.py's wrappers). */
+
+/* ---------- MSVC intrinsics (as halo_windows_prefix.h) */
+
+#define _InterlockedCompareExchange halo_linux_InterlockedCompareExchange
+#define _InterlockedDecrement halo_linux_InterlockedDecrement
+#define _InterlockedExchange halo_linux_InterlockedExchange
+#define _InterlockedExchangeAdd halo_linux_InterlockedExchangeAdd
+#define _InterlockedIncrement halo_linux_InterlockedIncrement
+
+/* ---------- structured exception handling (as halo_windows_prefix.h) */
+
+#define __try if (1)
+#define __except(filter) else if (0)
+#define __finally
+#define __leave
+
+/* ---------- multiplayer session limits of the native builds */
+
+#include "../../linux/include/halo_port_limits.h"
+
+#define FD_SETSIZE HALO_PORT_FD_SETSIZE
+
+/* ---------- Xbox functions named like Windows functions
+
+nxdk's winapi defines CreateFileA, Sleep and the rest for the Xbox-facing
+platform code's own use (port/xbox/src); the game and the Linux build's
+implementations of them see other names, as on Windows. */
+
+#include "../../windows/include/halo_windows_api_names.h"
+
+/* ---------- Winsock and source fixups shared with the Linux build */
+
+#ifndef HALO_LINUX_PLATFORM_LAYER
+#include "../../linux/include/halo_linux_winsock_names.h"
+#include "../../linux/include/halo_linux_source_fixups.h"
+#endif
+
+#include <stddef.h>
+
+#endif /* __HALO_XBOX_PREFIX_H */
