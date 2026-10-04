@@ -4,7 +4,7 @@
     python tools/xbox_dev.py build <dir>     make an nxdk project (its XBE and ISO)
     python tools/xbox_dev.py run <dir>       build it, boot it in xemu, stream its log
                                              until it prints the done marker, then
-                                             save a screenshot and stop xemu
+                                             stop xemu
 
 The machine's paths live in port/xbox/xemu.local.toml (not committed; the
 template is port/xbox/xemu.example.toml): nxdk, xemu, and the console files
@@ -16,11 +16,14 @@ seconds after the program's first log line: xemu plays its keyboard as the
 controller in port 1, and the keys are sent with System Events (macOS: the
 terminal needs the Accessibility permission).
 
+`run --shot 25` saves xemu's window 25 seconds after the first log line as
+shot-25.png in the run's folder (the terminal needs the Screen Recording
+permission).
+
 A program reports through COM2 (port/xbox/common/xbox_log.c). xemu emulates
 the debug kits' SuperIO serial port (-device lpc47m157), and the runner reads
 it from a socket. The program ends its run with XBOX_LOG_DONE_MARKER; a
-program that hangs is stopped at the timeout, its screen saved either way
-(QMP screendump).
+program that hangs is stopped at the timeout.
 """
 
 import argparse
@@ -237,6 +240,33 @@ def press_buttons(presses: list, start: float) -> None:
             return
 
 
+def take_shots(shots: list, start: float, out: Path) -> None:
+    """saves xemu's window as out/shot-SECONDS.png at each time after the program's first log line: its
+    bounds from System Events, the pixels with screencapture (the terminal needs the Screen Recording
+    permission; xemu's QMP has no screendump)"""
+    for seconds in shots:
+        time.sleep(max(0.0, start + seconds - time.time()))
+        script = ['tell application "System Events"',
+                  'set xemu to first process whose name contains "xemu"',
+                  "set frontmost of xemu to true",
+                  "delay 0.3",
+                  "set {x, y} to position of front window of xemu",
+                  "set {w, h} to size of front window of xemu",
+                  'return (x as text) & "," & (y as text) & "," & (w as text) & "," & (h as text)',
+                  "end tell"]
+        result = subprocess.run(["osascript", "-"], input="\n".join(script), text=True, capture_output=True)
+        if result.returncode != 0:
+            print(f"(--shot: {result.stderr.strip()})")
+            return
+        path = out / f"shot-{seconds:g}.png"
+        captured = subprocess.run(["screencapture", "-x", "-o", "-R", result.stdout.strip(), str(path)],
+                                  capture_output=True, text=True)
+        if captured.returncode != 0:
+            print(f"(--shot: {captured.stderr.strip()}; the terminal needs the Screen Recording permission)")
+            return
+        print(f"(shot {path.relative_to(ROOT)})", flush=True)
+
+
 class Qmp:
     def __init__(self, port: int, deadline: float):
         while True:
@@ -260,7 +290,8 @@ class Qmp:
                 return reply
 
 
-def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, presses: list) -> int:
+def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, presses: list,
+        shots: list) -> int:
     iso = build(config, project)
     xemu = expand(config["tools"].get("xemu", "/Applications/xemu.app/Contents/MacOS/xemu"))
     out = ROOT / "build/xbox/runs" / time.strftime("%Y%m%d-%H%M%S")
@@ -311,6 +342,8 @@ def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, 
                 print("(no QMP: xemu cannot be stopped cleanly)")
             if presses:
                 threading.Thread(target=press_buttons, args=(presses, time.time()), daemon=True).start()
+            if shots:
+                threading.Thread(target=take_shots, args=(sorted(shots), time.time(), out), daemon=True).start()
             status = stream_log(connection, out / "log.txt", process, deadline)
         if status != 0:
             reason = "xemu exited" if process.poll() is not None else f"the {timeout:.0f} s timeout"
@@ -414,6 +447,8 @@ def main() -> None:
     run_parser.add_argument("--gdb", action="store_true", help="wait for gdb on localhost:1234")
     run_parser.add_argument("--press", action="append", default=[], metavar="SECONDS:BUTTON,...",
                             help=f"press controller buttons in xemu ({', '.join(PRESS_KEYS)}); repeatable")
+    run_parser.add_argument("--shot", action="append", default=[], type=float, metavar="SECONDS",
+                            help="save xemu's window as shot-SECONDS.png in the run's folder; repeatable")
     args = parser.parse_args()
     config = load_config()
     if args.command == "doctor":
@@ -421,7 +456,8 @@ def main() -> None:
     if args.command == "build":
         print(build(config, args.project.resolve()))
         return
-    sys.exit(run(config, args.project.resolve(), args.timeout, args.headless, args.gdb, parse_presses(args.press)))
+    sys.exit(run(config, args.project.resolve(), args.timeout, args.headless, args.gdb, parse_presses(args.press),
+            args.shot))
 
 
 if __name__ == "__main__":
