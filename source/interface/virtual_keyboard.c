@@ -357,6 +357,9 @@ static void virtual_keyboard_set_active(boolean active)
 	virtual_keyboard_globals.active = active;
 	platform_text_typing(active);
 }
+/* port: the keyboard up for a menu's text field (virtual_keyboard_launch_text):
+its caption, and its text taken as typed rather than as a saved game's name */
+static wchar_t const *virtual_keyboard_text_caption = NULL;
 
 /* ---------- public code */
 
@@ -470,9 +473,26 @@ boolean virtual_keyboard_launch(
 			MAXIMUM_VIRTUAL_KEYBOARD_SAVED_TEXT_LENGTH);
 		virtual_keyboard_globals.saved_text[MAXIMUM_VIRTUAL_KEYBOARD_SAVED_TEXT_LENGTH - 1] = L'\0';
 		virtual_keyboard_globals.last_exit_saved_text = FALSE;
+		virtual_keyboard_text_caption = NULL;
 		ui_play_audio_feedback_sound(_ui_audio_feedback_forward);
 		result = TRUE;
 	}
+
+	return result;
+}
+
+/* port: the keyboard for a menu's text field (port/linux/game/menu_functions.c,
+on a machine typed on with a controller alone): the caption given, and Done
+keeps whatever was typed (virtual_keyboard_last_exit_saved_text) */
+boolean virtual_keyboard_launch_text(
+	wchar_t *text_buffer,
+	word buffer_size,
+	wchar_t const *caption)
+{
+	boolean result = virtual_keyboard_launch(text_buffer, buffer_size, FIRST_VIRTUAL_KEYBOARD_CAPTION_STRING_INDEX);
+
+	if (result)
+		virtual_keyboard_text_caption = caption;
 
 	return result;
 }
@@ -680,9 +700,10 @@ static void virtual_keyboard_render_internal(
 	if (virtual_keyboard_globals.keyboard->special_key_labels_string_list_tag.index != NONE)
 	{
 		rectangle2d bounds;
-		wchar_t *caption = unicode_string_list_get_string(
-			virtual_keyboard_globals.keyboard->special_key_labels_string_list_tag.index,
-			virtual_keyboard_globals.caption_index);
+		wchar_t const *caption = virtual_keyboard_text_caption ? virtual_keyboard_text_caption :
+			unicode_string_list_get_string(
+				virtual_keyboard_globals.keyboard->special_key_labels_string_list_tag.index,
+				virtual_keyboard_globals.caption_index);
 
 		bounds.y0 = 78;
 		bounds.x0 = 114;
@@ -984,6 +1005,15 @@ static boolean virtual_keyboard_select(
 	switch (keycode)
 	{
 	case _vkey_done:
+		/* port: a menu's text field takes what was typed */
+		if (virtual_keyboard_text_caption)
+		{
+			virtual_keyboard_globals.last_exit_saved_text = TRUE;
+			ui_play_audio_feedback_sound(_ui_audio_feedback_back);
+			virtual_keyboard_set_active(FALSE);
+			event_manager_flush();
+			break;
+		}
 		/* port: a name kept to one the host's ban command can name: its
 		spaces before and after dropped, and one without a character it can
 		type (player_name_clean) empty, which is refused below */

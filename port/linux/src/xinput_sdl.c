@@ -311,6 +311,13 @@ void platform_text_typing(int typing)
 	text_typing_update();
 }
 
+/* (the menus' text fields are typed into with the keyboard, not the game's
+on-screen one: menu_functions.c) */
+int platform_text_field_on_screen(void)
+{
+	return FALSE;
+}
+
 void platform_text_field(int typing, int password)
 {
 	text_typing_field = typing != 0;

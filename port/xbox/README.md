@@ -51,7 +51,8 @@ cxbe would otherwise load into memory.
 | `nxdk_libc.c` | What pdclib lacks or gets wrong: printf's floating point, `strtod`, `fmod`, `scalbn`, `lrint` (musl's: `port/third_party/musl-stdio`) |
 | `sdl_files.c` | The SDL file functions `port_config.c` and `menu_files.c` call (`include/SDL3/SDL.h`) |
 | `d3d8_null.c` | Direct3D without drawing, until the renderer (phase 2) |
-| `xinput_null.c` | No controllers yet |
+| `nxdk_gamepads.c` | The controllers through nxdk's USB host stack (started before the game takes its memory: its pool is contiguous); each port's latest report |
+| `xinput_xbox.c` | The SDK's `XInput*` over them (a report is an `XINPUT_GAMEPAD`), rumble; the menus' text fields on the game's on-screen keyboard (`platform_text_field_on_screen`) |
 | `xbox_platform.c` | The desktop's hooks as the Xbox answers them; no high-res HUD or text, no internet play yet |
 
 Threads, mutexes, condition variables and clocks are the Windows build's
@@ -69,7 +70,14 @@ The game's run packs the maps `[game]` names in `xemu.local.toml` (`ui`
 alone by default: the main menu) beside the XBE, as `D:\maps`. Under xemu
 with Cerbios (128 MB) it takes its memory, reads `ui.map` and its menus,
 writes `E:\halo\config.toml`, and runs its main loop at about 30 frames a
-second, drawing nothing and with no controller.
+second, drawing nothing.
+
+xemu's keyboard is the controller in port 1 (arrows the D-pad, A B X Y
+those letters, Return Start, E S D F and I J K L the sticks, W and O the
+triggers). `--press SECONDS:BUTTON,...` presses its buttons that long after
+the program's first log line, e.g. `--press 18:down,a` opens Multiplayer;
+it needs the terminal to have macOS's Accessibility permission. The menus
+repeat a button held over about a quarter second.
 
 With `--gdb`, lldb attaches with `gdb-remote 1234`; the kernel's own
 breakpoints and assertions go to its debugger on COM1 instead (a run whose

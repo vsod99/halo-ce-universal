@@ -71,6 +71,7 @@ their handlers open opens.
 #include "interface/player_ui.h"
 #include "interface/ui_widget.h"
 #include "interface/ui_widget_event_handler_functions.h"
+#include "interface/virtual_keyboard.h"
 #include "main/main.h"
 #include "networking/network_game_manager.h"
 #include "saved games/player_profile.h"
@@ -2272,6 +2273,7 @@ int p2p_peer_address(unsigned char const *identifier, unsigned long *address);
 int platform_clipboard_get(char *text, int size);
 void platform_clipboard_set(char const *text);
 void platform_text_field(int typing, int password);
+int platform_text_field_on_screen(void);
 int config_boolean(char const *name);
 void ui_widget_port_post_button(short controller_index, short button_index);
 
@@ -2318,7 +2320,9 @@ static struct
 
 /* ---- a text field (Direct Link's link, the game's name): the keyboard
 types into it (Ctrl+V pastes), its row's A (enter) is done, B (escape)
-cancels */
+cancels. Where the platform has no keyboard (platform_text_field_on_screen:
+the Xbox) the game's own on-screen keyboard comes up for it instead, and
+its Done or B ends it */
 static struct
 {
 	struct widget_instance *row;
@@ -2328,6 +2332,9 @@ static struct
 	void (*done)(char const *text);
 	/* a password's: shown as stars (text_field_begin_masked) */
 	boolean masked;
+	/* (the on-screen keyboard's text: at most 31 characters) */
+	boolean on_screen;
+	wchar_t typed[32];
 } text_field;
 
 /* when the field was last shown (a field not shown for a while is let go
@@ -2340,7 +2347,7 @@ static boolean text_field_editing(struct widget_instance *row)
 }
 
 static void text_field_open(struct widget_instance *row, char const *text, short maximum,
-	void (*done)(char const *text), boolean masked)
+	wchar_t const *caption, void (*done)(char const *text), boolean masked)
 {
 	struct key_stroke key;
 
@@ -2350,29 +2357,47 @@ static void text_field_open(struct widget_instance *row, char const *text, short
 	text_field.maximum = (short)MIN(maximum, TEXT_FIELD_LENGTH - 1);
 	text_field.done = done;
 	text_field.masked = masked;
+	text_field.on_screen = FALSE;
 	text_field_shown_time = system_milliseconds();
+	if (platform_text_field_on_screen())
+	{
+		short length = (short)MIN(text_field.maximum, NUMBEROF(text_field.typed) - 1);
+		short index;
+
+		for (index = 0; index < length && text[index]; index++)
+			text_field.typed[index] = (wchar_t)(unsigned char)text[index];
+		text_field.typed[index] = 0;
+		text_field.on_screen = virtual_keyboard_launch_text(text_field.typed,
+			(word)((length + 1) * sizeof(wchar_t)), caption);
+		if (!text_field.on_screen)
+			text_field.row = NULL;
+		return;
+	}
 	while (input_get_key(&key))
 		;
 	platform_text_field(TRUE, masked);
 }
 
 static void text_field_begin(struct widget_instance *row, char const *text, short maximum,
-	void (*done)(char const *text))
+	wchar_t const *caption, void (*done)(char const *text))
 {
-	text_field_open(row, text, maximum, done, FALSE);
+	text_field_open(row, text, maximum, caption, done, FALSE);
 }
 
 /* a password's field: as text_field_begin, its text shown as stars */
 static void text_field_begin_masked(struct widget_instance *row, char const *text, short maximum,
 	void (*done)(char const *text))
 {
-	text_field_open(row, text, maximum, done, TRUE);
+	text_field_open(row, text, maximum, L"PASSWORD", done, TRUE);
 }
 
 static void text_field_end(boolean keep)
 {
 	void (*done)(char const *text) = text_field.done;
 
+	if (text_field.on_screen && virtual_keyboard_active())
+		virtual_keyboard_close();
+	text_field.on_screen = FALSE;
 	platform_text_field(FALSE, FALSE);
 	text_field.row = NULL;
 	text_field.done = NULL;
@@ -2380,6 +2405,21 @@ static void text_field_end(boolean keep)
 		snprintf(text_field.text, sizeof(text_field.text), "%s", text_field.before);
 	else if (done)
 		done(text_field.text);
+}
+
+static void wide_to_text(wchar_t const *wide, char *text, short size);
+
+/* whether the on-screen keyboard is up for the field; once it has gone, the
+field ends with its text kept (Done) or not (B) */
+static boolean text_field_keyboard_up(void)
+{
+	if (!text_field.row || !text_field.on_screen)
+		return FALSE;
+	if (virtual_keyboard_active())
+		return TRUE;
+	wide_to_text(text_field.typed, text_field.text, sizeof(text_field.text));
+	text_field_end(virtual_keyboard_last_exit_saved_text());
+	return FALSE;
 }
 
 static void text_field_insert(char const *text)
@@ -2402,6 +2442,20 @@ static void text_field_show(struct widget_instance *value, char const *text, boo
 	wchar_t shown[TEXT_FIELD_LENGTH + 2];
 	short index;
 
+	if (editing && text_field.on_screen)
+	{
+		/* (the text as the keyboard has it, then as it was left) */
+		editing = FALSE;
+		if (text_field_keyboard_up())
+		{
+			text_field_shown_time = system_milliseconds();
+			ustrncpy(shown, text_field.typed, NUMBEROF(shown) - 1);
+			shown[NUMBEROF(shown) - 1] = 0;
+			text_set(value, shown);
+			return;
+		}
+		text = text_field.text;
+	}
 	if (editing)
 	{
 		text_field_shown_time = system_milliseconds();
@@ -3046,7 +3100,7 @@ static boolean server_name_edit(struct widget_instance *row)
 		return TRUE;
 	}
 	wide_to_text(multiplayer.game_name, text, sizeof(text));
-	text_field_begin(row, text, NUMBEROF(multiplayer.game_name) - 1, game_name_done);
+	text_field_begin(row, text, NUMBEROF(multiplayer.game_name) - 1, L"GAME NAME", game_name_done);
 	return TRUE;
 }
 
@@ -5738,8 +5792,9 @@ void pc_menu_game_data_function_invoke(
 
 	if (!name)
 		return;
-	/* (a text field whose screen has gone: let go of) */
-	if (text_field.row && system_milliseconds() - text_field_shown_time > 500)
+	/* (a text field whose screen has gone: let go of; not while the
+	on-screen keyboard is up for it) */
+	if (!text_field_keyboard_up() && text_field.row && system_milliseconds() - text_field_shown_time > 500)
 		text_field_end(FALSE);
 	if (!strcmp(name, "solo map list update"))
 		level_list_update(widget);

@@ -28,6 +28,11 @@ boolean virtual_keyboard_launch(
 	wchar_t *text_buffer,
 	word buffer_size,
 	short caption_index);
+/* port: for a menu's text field (virtual_keyboard.c) */
+boolean virtual_keyboard_launch_text(
+	wchar_t *text_buffer,
+	word buffer_size,
+	wchar_t const *caption);
 boolean virtual_keyboard_active(
 	void);
 void virtual_keyboard_close(
