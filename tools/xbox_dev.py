@@ -220,7 +220,7 @@ def parse_presses(texts: list) -> list:
 
 
 def press_buttons(presses: list, start: float) -> None:
-    """brings xemu forward and holds each button for 0.4 s, in one AppleScript
+    """brings xemu forward and holds each button for 0.12 s (longer repeats in the menus), in one AppleScript
     each time (separate ones lose keys)"""
     for seconds, codes in presses:
         time.sleep(max(0.0, start + seconds - time.time()))
@@ -228,7 +228,7 @@ def press_buttons(presses: list, start: float) -> None:
                   'set frontmost of (first process whose name contains "xemu") to true',
                   "delay 0.3"]
         for code in codes:
-            script += [f"key down {code}", "delay 0.4", f"key up {code}", "delay 0.4"]
+            script += [f"key down {code}", "delay 0.12", f"key up {code}", "delay 0.4"]
         script.append("end tell")
         result = subprocess.run(["osascript", "-"], input="\n".join(script), text=True,
                                 capture_output=True)

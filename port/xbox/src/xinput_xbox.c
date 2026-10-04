@@ -170,11 +170,18 @@ int platform_binding_capture_poll(int *input)
 	return 0;
 }
 
-/* the desktop's typing into a text field (the menus' player name): the Xbox
-will use its on-screen keyboard */
-void platform_text_field(int typing)
+/* the menus' text fields (port/linux/game/menu_functions.c): typed on the
+game's own on-screen keyboard */
+int platform_text_field_on_screen(void)
+{
+	return TRUE;
+}
+
+/* the desktop's typing into a text field: none */
+void platform_text_field(int typing, int password)
 {
 	(void)typing;
+	(void)password;
 }
 
 void platform_text_typing(int typing)
