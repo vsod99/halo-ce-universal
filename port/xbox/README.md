@@ -23,9 +23,16 @@ Microsoft SDK). Until the console is ready, everything runs in
 
 ## The loop
 
-    python3 tools/xbox_dev.py run port/xbox/probe            # with xemu's window
-    python3 tools/xbox_dev.py run port/xbox/probe --headless # without
+    python3 tools/xbox_dev.py run port/xbox/probe            # opens xemu's window
     python3 tools/xbox_dev.py run port/xbox/probe --gdb      # waits for gdb on :1234
+
+(`--headless` passes `-display none`, but xemu 0.8 then never starts the
+machine: its own window drives the emulation. Runs open the window.)
+
+The console's memory is the BIOS's as much as the configuration's: a
+modified retail BIOS such as Complex 4627 gives the kernel 64 MB even with
+`memory = "128"`. Testing the 128 MB layout needs a BIOS that sets up
+128 MB, as the console's upgrade does.
 
 `run` makes the program (`make` in its folder, nxdk's Makefile), clears the
 XBE's "limit to 64 MB" flag (cxbe always sets it, and the kernel would give
@@ -55,3 +62,10 @@ buffer and sent over the network, the same on xemu and the console.
 | Folder | What it finds out |
 | --- | --- |
 | `probe` | Phase 0: whether an nxdk program can have the tag cache at physical 0x3A6000 and the native game state at 0x1A00000, where nxdk's start-up puts its image, stack and heap, and how much memory is left beside the caches |
+
+The probe's first results (xemu 0.8.136, Complex 4627, so 64 MB): the tag
+cache and the game state are had at exactly their addresses, and nxdk's
+image, stack and heap stay below 0x130000. 64,876 KB are free at start,
+21,868 KB once those and the sound cache are held: too little for the
+22,528 KB texture cache, before any of the game's code, heap, Direct3D or
+frame buffers. The native layout needs the 128 MB console.
