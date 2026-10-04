@@ -1,0 +1,23 @@
+{
+  "comment": "Original Xbox build inputs (tools/xbox_build.py). The game's sources, defines and include directories are the Linux build's (port/linux/port.json); this lists the Linux platform layer's units the Xbox shares. See port/xbox/README.md.",
+  "linux_platform_sources": [
+    "port/linux/src/bink_null.c",
+    "port/linux/src/d3d8_resources.c",
+    "port/linux/src/halo_linker_common.c",
+    "port/linux/src/msvc_crt.c",
+    "port/linux/src/msvc_wide.c",
+    "port/linux/src/xbdm.c",
+    "port/linux/src/xbox_files.c",
+    "port/linux/src/xbox_kernel.c",
+    "port/linux/src/xbox_xapi.c"
+  ],
+  "libraries": [
+    "libxboxrt.lib",
+    "libpdclib.lib",
+    "libwinapi.lib",
+    "libnxdk.lib",
+    "libnxdk_hal.lib",
+    "libpbkit.lib",
+    "xboxkrnl/libxboxkrnl.lib"
+  ]
+}
