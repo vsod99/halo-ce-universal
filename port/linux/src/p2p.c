@@ -710,21 +710,6 @@ void p2p_hardware_id(char *hex, int size)
 	snprintf(hex, (size_t)size, "%s", cached);
 }
 
-void p2p_hardware_id_sanitize(char *destination, int size, const char *source)
-{
-	int length = 0;
-
-	for (; source && *source && length < size - 1 && length < 2 * P2P_HARDWARE_ID_BYTES; source++)
-	{
-		char character = *source >= 'A' && *source <= 'F' ? *source - 'A' + 'a' : *source;
-
-		if ((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f'))
-			destination[length++] = character;
-	}
-	if (size > 0)
-		destination[length] = 0;
-}
-
 void p2p_discord_identity(char *id, int id_size, char *name, int name_size)
 {
 	if (id_size > 0)
