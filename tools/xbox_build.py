@@ -227,6 +227,9 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
         f"-I{PORT_DIR / 'src'}", f"-I{LINUX_DIR / 'src'}", "-Iport/include",
         f"-I{TOML_DIR}", f"-I{EXPAT_DIR}", "-Isource -Isource/cseries",
         libc_includes, f"-I{XDK_INCLUDE}",
+        # pbkit's NV2A method names (nv_regs.h) for the Direct3D device
+        # (d3d8_nv2a.c), searched last
+        f"-idirafter {_quote(nxdk_lib / 'pbkit')}",
     ])
     # nxdk-cc's own flags (nxdk/bin/nxdk-cc)
     nxdk_cflags = " ".join([

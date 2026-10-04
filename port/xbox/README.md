@@ -50,7 +50,8 @@ cxbe would otherwise load into memory.
 | `nxdk_posix.c` | File descriptors and the file half of `port/linux/src/posix.h` over nxdk's Windows API; `D:` is the XBE's folder (maps), `E:/halo` the settings and saves |
 | `nxdk_libc.c` | What pdclib lacks or gets wrong: printf's floating point, `strtod`, `fmod`, `scalbn`, `lrint` (musl's: `port/third_party/musl-stdio`) |
 | `sdl_files.c` | The SDL file functions `port_config.c` and `menu_files.c` call (`include/SDL3/SDL.h`) |
-| `d3d8_null.c` | Direct3D without drawing, until the renderer (phase 2) |
+| `d3d8_nv2a.c` | The game's Direct3D 8 as NV2A push buffer methods: its vertex shaders (NV2A microcode) and pixel shaders (combiner values) as they are, the simple render states as their own methods, the rest before each draw; textures, vertex buffers and surfaces at their physical addresses. `debug.gpu_trace_frame` logs a frame's draws |
+| `nxdk_nv2a.c` | pbkit: the video mode, the push buffer, the three screen buffers flipped at the vertical blank (started before the game takes its memory), and context DMAs over the low 64 MB for the game's own surfaces |
 | `nxdk_gamepads.c` | The controllers through nxdk's USB host stack (started before the game takes its memory: its pool is contiguous); each port's latest report |
 | `xinput_xbox.c` | The SDK's `XInput*` over them (a report is an `XINPUT_GAMEPAD`), rumble; the menus' text fields on the game's on-screen keyboard (`platform_text_field_on_screen`) |
 | `xbox_platform.c` | The desktop's hooks as the Xbox answers them; no high-res HUD or text, no internet play yet |
@@ -69,8 +70,9 @@ and 4, and the texture layout without OpenGL (`texture_layout.c`).
 The game's run packs the maps `[game]` names in `xemu.local.toml` (`ui`
 alone by default: the main menu) beside the XBE, as `D:\maps`. Under xemu
 with Cerbios (128 MB) it takes its memory, reads `ui.map` and its menus,
-writes `E:\halo\config.toml`, and runs its main loop at about 30 frames a
-second, drawing nothing.
+writes `E:\halo\config.toml`, and draws the main menu on the NV2A. The
+PC menus' own art (PNGs drawn at a desktop's resolution) is not drawn yet:
+their buttons show blank.
 
 xemu's keyboard is the controller in port 1 (arrows the D-pad, A B X Y
 those letters, Return Start, E S D F and I J K L the sticks, W and O the
@@ -113,9 +115,11 @@ A retail console has no SuperIO chip: there, `xbox_log` finds no serial
 port and writes to the screen only. The plan is for the game to log over
 the network as well, which works on both.
 
-xemu's QMP has no `screendump`, since xemu draws with its own renderer.
-Pictures of frames will come from the program, read back from its frame
-buffer and sent over the network, the same on xemu and the console.
+xemu's QMP has no `screendump`, since xemu draws with its own renderer:
+`--shot SECONDS` saves xemu's window that long after the program's first
+log line as `shot-SECONDS.png` in the run's folder (the terminal needs
+macOS's Screen Recording permission). On the console, pictures of frames
+will come from the program over the network.
 
 ## Programs
 

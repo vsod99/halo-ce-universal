@@ -26,4 +26,26 @@ sent; false if there is none */
 int xbox_gamepad_report(int port, unsigned char report[XBOX_GAMEPAD_REPORT_SIZE], unsigned long *reports);
 void xbox_gamepad_rumble(int port, unsigned short left, unsigned short right);
 
+/* the GPU through pbkit (nxdk_nv2a.c, for d3d8_nv2a.c) */
+/* context DMAs over all of the low 64 MB for the color and depth buffers */
+#define XBOX_GPU_DMA_COLOR 18
+#define XBOX_GPU_DMA_ZETA 19
+/* whether pbkit started (with the video mode) */
+int xbox_gpu_ready(void);
+void xbox_gpu_screen(unsigned long *width, unsigned long *height, unsigned long *pitch);
+/* the physical address of the buffer the next frame is drawn into */
+unsigned long xbox_gpu_back_buffer(void);
+/* room for that many words of methods at the returned address; the end
+of what was written goes to xbox_gpu_end, which sends it to the GPU */
+unsigned long *xbox_gpu_begin(unsigned long dwords);
+void xbox_gpu_end(unsigned long *end);
+int xbox_gpu_busy(void);
+void xbox_gpu_wait_idle(void);
+/* shows the back buffer at the next vertical blank; the next one then
+becomes the back buffer */
+void xbox_gpu_present(void);
+/* waits for a vertical blank; their count */
+unsigned long xbox_gpu_wait_vertical_blank(void);
+unsigned long xbox_gpu_vertical_blank_count(void);
+
 #endif /* __HALO_XBOX_NXDK_PLATFORM_H */

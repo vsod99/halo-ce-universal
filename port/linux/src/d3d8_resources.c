@@ -8,7 +8,10 @@ and palettes, plus the few D3DX helpers the game uses.
 Resources keep the Xbox memory model: their data lives in the contiguous
 window and their Data field holds its physical address (index buffers,
 which the GPU never reads directly, hold a virtual one). Texel layout
-follows xbox_textures.c, so locks and uploads agree.
+follows xbox_textures.c, so locks and uploads agree. As the Xbox's
+Direct3D, a texture's border color comes from the sampler
+(D3DFORMAT_BORDERSOURCE_COLOR): without it the NV2A would look for border
+texels in the texture's data (port/xbox/src/d3d8_nv2a.c).
 */
 
 #include "xgpu.h"
@@ -158,7 +161,7 @@ static HRESULT create_texture(unsigned long width, unsigned long height, unsigne
 			~(unsigned long)(D3DTEXTURE_PITCH_ALIGNMENT - 1);
 
 		texture->Format = ((DWORD)format << D3DFORMAT_FORMAT_SHIFT) | (1 << D3DFORMAT_MIPMAP_SHIFT) |
-			(2 << D3DFORMAT_DIMENSION_SHIFT) | D3DFORMAT_DMACHANNEL_A;
+			(2 << D3DFORMAT_DIMENSION_SHIFT) | D3DFORMAT_BORDERSOURCE_COLOR | D3DFORMAT_DMACHANNEL_A;
 		texture->Size = ((pitch / D3DTEXTURE_PITCH_ALIGNMENT - 1) << D3DSIZE_PITCH_SHIFT) |
 			((height - 1) << D3DSIZE_HEIGHT_SHIFT) | (width - 1);
 	}
@@ -171,7 +174,7 @@ static HRESULT create_texture(unsigned long width, unsigned long height, unsigne
 			(levels << D3DFORMAT_MIPMAP_SHIFT) |
 			((depth > 1 ? 3 : 2) << D3DFORMAT_DIMENSION_SHIFT) |
 			(cube_map ? D3DFORMAT_CUBEMAP : 0) |
-			D3DFORMAT_DMACHANNEL_A;
+			D3DFORMAT_BORDERSOURCE_COLOR | D3DFORMAT_DMACHANNEL_A;
 		texture->Size = 0;
 	}
 	xgpu_texture_describe(texture->Format, texture->Size, &description);
