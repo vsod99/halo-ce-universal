@@ -11,6 +11,11 @@ template is port/xbox/xemu.example.toml): nxdk, xemu, and the console files
 xemu boots with (MCPX boot ROM, flash BIOS, EEPROM, hard disk image), which
 must be dumped from your own console and are never committed.
 
+`run --press 20:a,start` presses controller buttons in xemu's window, the
+seconds after the program's first log line: xemu plays its keyboard as the
+controller in port 1, and the keys are sent with System Events (macOS: the
+terminal needs the Accessibility permission).
+
 A program reports through COM2 (port/xbox/common/xbox_log.c). xemu emulates
 the debug kits' SuperIO serial port (-device lpc47m157), and the runner reads
 it from a socket. The program ends its run with XBOX_LOG_DONE_MARKER; a
@@ -26,6 +31,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -175,6 +181,11 @@ def write_xemu_config(config: dict, iso: Path, directory: Path) -> Path:
         "[sys.files]",
         *(f"{key} = {json.dumps(value)}" for key, value in files.items()),
         "",
+        # a controller in port 1: xemu's keyboard (its arrows, the letter
+        # keys for the buttons), so every run has one plugged in
+        "[input.bindings]",
+        "port1 = 'keyboard'",
+        "",
         "[net]",
         "enable = true",
         "backend = 'nat'",
@@ -182,6 +193,48 @@ def write_xemu_config(config: dict, iso: Path, directory: Path) -> Path:
     path = directory / "xemu.toml"
     path.write_text("\n".join(lines) + "\n")
     return path
+
+
+# xemu's keyboard controller (its default map) as macOS key codes; the
+# sticks are E S D F and I J K L
+PRESS_KEYS = {
+    "a": 0, "b": 11, "x": 7, "y": 16, "start": 36, "back": 51,
+    "up": 126, "down": 125, "left": 123, "right": 124,
+    "lt": 13, "rt": 31,
+    "lup": 14, "lleft": 1, "ldown": 2, "lright": 3,
+    "rup": 34, "rleft": 38, "rdown": 40, "rright": 37,
+}
+
+
+def parse_presses(texts: list) -> list:
+    """--press SECONDS:BUTTON,BUTTON... as (seconds, [key codes])"""
+    presses = []
+    for text in texts:
+        seconds, _, names = text.partition(":")
+        try:
+            codes = [PRESS_KEYS[name.strip().lower()] for name in names.split(",") if name.strip()]
+            presses.append((float(seconds), codes))
+        except (KeyError, ValueError):
+            sys.exit(f"--press {text}: SECONDS:BUTTON,... with buttons {', '.join(PRESS_KEYS)}")
+    return sorted(presses)
+
+
+def press_buttons(presses: list, start: float) -> None:
+    """brings xemu forward and holds each button for 0.4 s, in one AppleScript
+    each time (separate ones lose keys)"""
+    for seconds, codes in presses:
+        time.sleep(max(0.0, start + seconds - time.time()))
+        script = ['tell application "System Events"',
+                  'set frontmost of (first process whose name contains "xemu") to true',
+                  "delay 0.3"]
+        for code in codes:
+            script += [f"key down {code}", "delay 0.4", f"key up {code}", "delay 0.4"]
+        script.append("end tell")
+        result = subprocess.run(["osascript", "-"], input="\n".join(script), text=True,
+                                capture_output=True)
+        if result.returncode != 0:
+            print(f"(--press: {result.stderr.strip()}; the terminal needs the Accessibility permission)")
+            return
 
 
 class Qmp:
@@ -207,7 +260,7 @@ class Qmp:
                 return reply
 
 
-def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool) -> int:
+def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, presses: list) -> int:
     iso = build(config, project)
     xemu = expand(config["tools"].get("xemu", "/Applications/xemu.app/Contents/MacOS/xemu"))
     out = ROOT / "build/xbox/runs" / time.strftime("%Y%m%d-%H%M%S")
@@ -256,6 +309,8 @@ def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool) 
                 qmp = Qmp(qmp_port, deadline)
             except OSError:
                 print("(no QMP: xemu cannot be stopped cleanly)")
+            if presses:
+                threading.Thread(target=press_buttons, args=(presses, time.time()), daemon=True).start()
             status = stream_log(connection, out / "log.txt", process, deadline)
         if status != 0:
             reason = "xemu exited" if process.poll() is not None else f"the {timeout:.0f} s timeout"
@@ -357,6 +412,8 @@ def main() -> None:
     run_parser.add_argument("--timeout", type=float, default=60)
     run_parser.add_argument("--headless", action="store_true", help="no xemu window (-display none)")
     run_parser.add_argument("--gdb", action="store_true", help="wait for gdb on localhost:1234")
+    run_parser.add_argument("--press", action="append", default=[], metavar="SECONDS:BUTTON,...",
+                            help=f"press controller buttons in xemu ({', '.join(PRESS_KEYS)}); repeatable")
     args = parser.parse_args()
     config = load_config()
     if args.command == "doctor":
@@ -364,7 +421,7 @@ def main() -> None:
     if args.command == "build":
         print(build(config, args.project.resolve()))
         return
-    sys.exit(run(config, args.project.resolve(), args.timeout, args.headless, args.gdb))
+    sys.exit(run(config, args.project.resolve(), args.timeout, args.headless, args.gdb, parse_presses(args.press)))
 
 
 if __name__ == "__main__":

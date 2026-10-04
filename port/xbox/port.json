@@ -19,6 +19,7 @@
   ],
   "libraries": [
     "libnxdk_automount_d.lib",
+    "nxdk_usb.lib",
     "libxboxrt.lib",
     "libpdclib.lib",
     "libwinapi.lib",
