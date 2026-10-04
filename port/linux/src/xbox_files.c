@@ -160,6 +160,12 @@ const char *platform_save_root(void)
 
 		if (*environment)
 			snprintf(root, sizeof(root), "%s", environment);
+#ifdef HALO_XBOX
+		/* the original Xbox (port/xbox): its hard disk, as the data may be
+		on a disc */
+		else if (1)
+			snprintf(root, sizeof(root), "E:/halo");
+#endif
 #ifdef _WIN32
 		/* the Windows build (port/windows) keeps saves in the roaming
 		application data folder */

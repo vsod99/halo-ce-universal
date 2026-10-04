@@ -37,10 +37,44 @@ lacks. The platform layer is the Linux build's units that implement the Xbox
 SDK (`port.json`) and `src/`'s own; `src/nxdk_*.c` alone see nxdk's
 Windows and kernel headers.
 
+The link (`build/xbox/halo.exe`, with its DWARF for gdb and a map,
+`halo.exe.map`) is made into the XBE without the debug information, which
+cxbe would otherwise load into memory.
+
+## The platform layer (`src/`)
+
+| Unit | What |
+| --- | --- |
+| `nxdk_main.c` | Start-up, before the game's `main`: the log, the hard disk as `E:`, `E:\halo`; Quit goes to the dashboard |
+| `nxdk_memory.c` | `XPhysicalAlloc` and page protection from the kernel's contiguous memory; the game state as virtual memory at 0x40000000 (`cache/physical_memory_map.c` takes the caches first) |
+| `nxdk_posix.c` | File descriptors and the file half of `port/linux/src/posix.h` over nxdk's Windows API; `D:` is the XBE's folder (maps), `E:/halo` the settings and saves |
+| `nxdk_libc.c` | What pdclib lacks or gets wrong: printf's floating point, `strtod`, `fmod`, `scalbn`, `lrint` (musl's: `port/third_party/musl-stdio`) |
+| `sdl_files.c` | The SDL file functions `port_config.c` and `menu_files.c` call (`include/SDL3/SDL.h`) |
+| `d3d8_null.c` | Direct3D without drawing, until the renderer (phase 2) |
+| `xinput_null.c` | No controllers yet |
+| `xbox_platform.c` | The desktop's hooks as the Xbox answers them; no high-res HUD or text, no internet play yet |
+
+Threads, mutexes, condition variables and clocks are the Windows build's
+(`port/windows/src/win32_threads.c`, nxdk has those Windows calls); sound
+and the network null ones (`dsound_null.c`, `xnet_null.c`) until phases 3
+and 4, and the texture layout without OpenGL (`texture_layout.c`).
+
 ## The loop
 
     python3 tools/xbox_dev.py run port/xbox/probe            # opens xemu's window
     python3 tools/xbox_dev.py run port/xbox/probe --gdb      # waits for gdb on :1234
+    python3 tools/xbox_dev.py run build/xbox/halo            # the game (ninja xbox)
+
+The game's run packs the maps `[game]` names in `xemu.local.toml` (`ui`
+alone by default: the main menu) beside the XBE, as `D:\maps`. Under xemu
+with Cerbios (128 MB) it takes its memory, reads `ui.map` and its menus,
+writes `E:\halo\config.toml`, and runs its main loop at about 30 frames a
+second, drawing nothing and with no controller.
+
+With `--gdb`, lldb attaches with `gdb-remote 1234`; the kernel's own
+breakpoints and assertions go to its debugger on COM1 instead (a run whose
+`com1.bin` grows to megabytes stopped in one), so set a breakpoint where it
+stopped and symbolize the stack with `llvm-symbolizer --obj=build/xbox/halo.exe`.
 
 (`--headless` passes `-display none`, but xemu 0.8 then never starts the
 machine: its own window drives the emulation. Runs open the window.)
@@ -50,7 +84,8 @@ modified retail BIOS such as Complex 4627 gives the kernel 64 MB even with
 `memory = "128"`. Testing the 128 MB layout needs a BIOS that sets up
 128 MB, as the console's upgrade does.
 
-`run` makes the program (`make` in its folder, nxdk's Makefile), clears the
+`run` makes the program (`make` in its folder, nxdk's Makefile; `ninja
+xbox` for the game), clears the
 XBE's "limit to 64 MB" flag (cxbe always sets it, and the kernel would give
 the program only 64 MB of a 128 MB console; `memory = "64"` keeps it), packs
 `bin/` into `build/xbox/<name>.iso`, and boots it in xemu with a generated

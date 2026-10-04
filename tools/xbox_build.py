@@ -9,8 +9,8 @@ build/xbox/halo`` boots it in xemu.
 Three kinds of units, as on Windows:
   - the game (source/, port/linux/game), with the Xbox prefix header and the
     Linux build's C runtime wrappers over pdclib;
-  - the Xbox-facing platform layer: the Linux build's units that implement
-    the Xbox SDK the game calls (port.json "linux_platform_sources") and
+  - the Xbox-facing platform layer: the other ports' units that implement
+    the Xbox SDK the game calls (port.json "platform_sources") and
     port/xbox/src's own, which see the same headers;
   - the units that talk to nxdk itself (port/xbox/src/nxdk_*.c and
     port/xbox/common), with nxdk's headers (its winapi and kernel) and not
@@ -22,13 +22,16 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .linux_build import (MUSL_MATH_DIR, TOML_DIR, XDK_INCLUDE, compile_launcher, game_defines_and_includes,
-                          game_sources, musl_math_sources, xdk_headers)
+from .linux_build import (EXPAT_DIR, MUSL_MATH_DIR, TOML_DIR, XDK_INCLUDE, compile_launcher,
+                          game_defines_and_includes, game_sources, musl_math_sources, xdk_headers)
+from .embed_assets import hud_asset_inputs
 from .ninja_syntax import Writer
-from .windows_build import inline_export_wrapper
+from .windows_build import EXPAT_SOURCES, inline_export_wrapper
 
 PORT_DIR = Path("port/xbox")
 LINUX_DIR = Path("port/linux")
+WINDOWS_DIR = Path("port/windows")
+MUSL_STDIO_DIR = Path("port/third_party/musl-stdio")
 PORT_CONFIG = PORT_DIR / "port.json"
 LOCAL_CONFIG = PORT_DIR / "xemu.local.toml"
 BUILD = Path("build/xbox")
@@ -143,6 +146,7 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
     n.variable("xbox_cc", _quote(llvm_bin / "clang"))
     n.variable("xbox_lld", _quote(lld_bin / "lld"))
     n.variable("xbox_cxbe", _quote(nxdk / "tools" / "cxbe" / "cxbe"))
+    n.variable("xbox_objcopy", _quote(llvm_bin / "llvm-objcopy"))
     # MSVC gives struct tags first named in a prototype file scope; clang
     # does not (as the Windows build)
     n.rule(
@@ -164,28 +168,38 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
     # nxdk-link's arguments (nxdk/bin/nxdk-link), with the game's stack
     n.rule(
         name="xbox_link",
-        command=("$xbox_lld -flavor link -subsystem:windows -fixed -base:0x00010000 "
-                 f"-stack:{STACK_SIZE:#x} -merge:.edata=.edataxb -debug -out:$out @$out.rsp"),
+        # (ninja quotes the response file's paths for a POSIX shell)
+        command=("$xbox_lld -flavor link --rsp-quoting=posix -subsystem:windows -fixed -base:0x00010000 "
+                 f"-stack:{STACK_SIZE:#x} -merge:.edata=.edataxb -debug -map:$out.map $ldflags -out:$out @$out.rsp"),
         description="XBOX LINK $out",
         rspfile="$out.rsp",
         rspfile_content="$in_newline $libs",
     )
+    # cxbe makes every section of the PE file a section the kernel loads:
+    # the XBE is made from a copy without the debug information, which
+    # halo.exe keeps for gdb
     n.rule(
         name="xbox_xbe",
-        command="$xbox_cxbe -OUT:$out -TITLE:Halo $in > /dev/null",
+        command=("$xbox_objcopy --strip-debug $in $out.exe && "
+                 "$xbox_cxbe -OUT:$out -TITLE:Halo $out.exe > /dev/null && rm $out.exe"),
         description="XBOX XBE $out",
     )
 
     abi = " ".join(XBOX_ABI_FLAGS + (["-DHALO_RELEASE"] if getattr(sln, "port_release", False) else []))
-    # pdclib, and nxdk's additions to it; the Linux build's C runtime
-    # wrappers and port/xbox/include's stand-ins for the headers pdclib
-    # lacks come first
-    libc_includes = " ".join([
-        f"-I{LINUX_DIR / 'include'}", f"-I{PORT_DIR / 'include'}",
+    # pdclib, after port/xbox/include's stand-ins for the headers it lacks;
+    # the game sees the Linux build's C runtime wrappers ahead of them (the
+    # MSVC names, which port/linux/src/msvc_*.c implement, as on Linux), and
+    # not nxdk's own MSVC additions (xboxrt/libc_extensions)
+    pdclib_includes = " ".join([
+        f"-I{PORT_DIR / 'include'}",
         f"-isystem {_quote(nxdk_lib / 'pdclib' / 'include')}",
         f"-I{_quote(nxdk_lib / 'pdclib' / 'platform' / 'xbox' / 'include')}",
-        f"-I{_quote(nxdk_lib / 'xboxrt' / 'libc_extensions')}",
     ])
+    libc_includes = f"-I{LINUX_DIR / 'include'} {pdclib_includes}"
+    # the POSIX calls of the platform layer shared with Linux: the Xbox's own
+    # (port/xbox/include/posix) and those the Windows build implements with
+    # Windows calls nxdk also has (port/windows/include/posix)
+    posix_includes = f"-I{PORT_DIR / 'include' / 'posix'} -I{WINDOWS_DIR / 'include' / 'posix'}"
     implicit = [*xdk_headers(), prefix_header, tags_header]
     objects: List[Path] = []
 
@@ -209,38 +223,63 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
 
     platform_cflags = " ".join([
         abi, " ".join(PLATFORM_FLAGS),
-        f"-include {prefix_header}",
+        f"-include {prefix_header}", posix_includes,
         f"-I{PORT_DIR / 'src'}", f"-I{LINUX_DIR / 'src'}", "-Iport/include",
-        f"-I{TOML_DIR}", "-Isource -Isource/cseries",
+        f"-I{TOML_DIR}", f"-I{EXPAT_DIR}", "-Isource -Isource/cseries",
         libc_includes, f"-I{XDK_INCLUDE}",
     ])
     # nxdk-cc's own flags (nxdk/bin/nxdk-cc)
     nxdk_cflags = " ".join([
-        abi, "-std=gnu11", "-Wall", "-ffreestanding", "-fno-builtin",
-        f"-I{PORT_DIR / 'src'}", f"-I{PORT_DIR / 'common'}",
+        abi, "-std=gnu11", "-Wall", "-ffreestanding", "-fno-builtin", posix_includes,
+        f"-I{PORT_DIR / 'src'}", f"-I{PORT_DIR / 'common'}", f"-I{LINUX_DIR / 'src'}", f"-I{PORT_DIR / 'include'}",
         f"-I{_quote(nxdk_lib)}", f"-I{_quote(nxdk_lib / 'xboxrt' / 'libc_extensions')}",
         f"-isystem {_quote(nxdk_lib / 'pdclib' / 'include')}",
         f"-I{_quote(nxdk_lib / 'pdclib' / 'platform' / 'xbox' / 'include')}",
         f"-I{_quote(nxdk_lib / 'winapi')}", f"-I{_quote(nxdk_lib / 'xboxrt' / 'vcruntime')}",
         "-U__STDC_NO_THREADS__",
     ])
-    for source in config.get("linux_platform_sources", []):
+    for source in config.get("platform_sources", []):
         add_object(Path(source), platform_cflags)
     for source in sorted((PORT_DIR / "src").glob("*.c")):
         add_object(source, nxdk_cflags if source.name.startswith("nxdk_") else platform_cflags)
     for source in sorted((PORT_DIR / "common").glob("*.c")):
         add_object(source, nxdk_cflags)
+    for source in config.get("windows_platform_sources", []):
+        add_object(Path(source), nxdk_cflags)
+    # the menus' files (port/assets/menus; menu_files.c), without the
+    # high-res HUD and text the other ports embed beside them
+    menus = BUILD / "generated" / "menu_files_assets.c"
+    n.rule(
+        name="xbox_embed_menus",
+        command="$python tools/embed_assets.py --menus-only $out",
+        description="XBOX EMBED $out",
+    )
+    n.build(outputs=menus, rule="xbox_embed_menus", implicit=[Path("tools/embed_assets.py"), *hud_asset_inputs()])
+    add_object(menus, platform_cflags)
     # the settings file's parser (port_config.c)
-    add_object(TOML_DIR / "tomlc17.c", " ".join([abi, "-std=gnu11", "-w", libc_includes]))
+    add_object(TOML_DIR / "tomlc17.c", " ".join([abi, "-std=gnu11", "-w", pdclib_includes]))
+    # the menus' XML parser (menu_files.c), built as on Windows (clang's
+    # Microsoft target defines _WIN32): with nxdk's windows.h, and its hash
+    # salt from nxdk's rand_s (its fallback's process id, which nxdk has no
+    # call for, is the one process's)
+    for name in EXPAT_SOURCES:
+        add_object(EXPAT_DIR / name, f"{nxdk_cflags} -w -I{EXPAT_DIR} '-DGetCurrentProcessId()=1'")
+    # printf's floating point and strtod, which nxdk's C library lacks
+    # (nxdk_libc.c)
+    musl_stdio_cflags = " ".join([abi, "-std=gnu11", "-w", f"-include {MUSL_STDIO_DIR}/include/musl_stdio.h",
+                                  f"-I{MUSL_STDIO_DIR}/include", f"-I{MUSL_STDIO_DIR}/src", pdclib_includes])
+    for source in [*sorted((MUSL_STDIO_DIR / "src").glob("*.c")), MUSL_STDIO_DIR / "support.c"]:
+        add_object(source, musl_stdio_cflags)
     # the game's sin, pow and the rest, the same on every port
     # (port/include/halo_math.h)
-    musl_cflags = " ".join([abi, "-std=gnu11", "-w", libc_includes, f"-I{MUSL_MATH_DIR}/include",
+    musl_cflags = " ".join([abi, "-std=gnu11", "-w", pdclib_includes, f"-I{MUSL_MATH_DIR}/include",
                             f"-include {MUSL_MATH_DIR}/include/libm.h"])
     for source in musl_math_sources():
         add_object(source, musl_cflags)
 
     libs = " ".join(_quote(nxdk_lib / name) for name in config.get("libraries", []))
-    n.build(outputs=exe, rule="xbox_link", inputs=objects, variables={"libs": libs})
+    ldflags = " ".join(f"-include:{symbol}" for symbol in config.get("include_symbols", []))
+    n.build(outputs=exe, rule="xbox_link", inputs=objects, variables={"libs": libs, "ldflags": ldflags})
     n.build(outputs=xbe, rule="xbox_xbe", inputs=exe)
     # the game's units alone, which compile before the platform layer links
     n.build(outputs="xbox-game", rule="phony", inputs=game_objects)

@@ -96,18 +96,49 @@ def set_memory_limit(xbe: Path, limit_64mb: bool) -> None:
     xbe.write_bytes(bytes(data))
 
 
+def add_maps(config: dict, maps_dir: Path) -> None:
+    """the maps [game] names (ui alone by default) from its maps folder,
+    beside the game's XBE (D:\\maps), linked rather than copied"""
+    game = config.get("game", {})
+    if not game.get("maps_folder"):
+        sys.exit("[game] maps_folder is not set in port/xbox/xemu.local.toml (the Xbox maps the game reads)")
+    source = expand(game["maps_folder"])
+    names = [name.strip() for name in game.get("maps", "ui").split(",") if name.strip()]
+    if maps_dir.is_dir():
+        shutil.rmtree(maps_dir)
+    maps_dir.mkdir(parents=True)
+    for name in names:
+        map_file = source / f"{name}.map"
+        if not map_file.is_file():
+            sys.exit(f"{map_file} is missing")
+        try:
+            os.link(map_file, maps_dir / map_file.name)
+        except OSError:
+            shutil.copyfile(map_file, maps_dir / map_file.name)
+
+
 def build(config: dict, project: Path) -> Path:
-    """make the project's bin/default.xbe, set its memory limit to the
-    configured console's, and pack bin/ into an ISO; returns the ISO"""
+    """make the project's bin/default.xbe (an nxdk project with its
+    Makefile, or the game, build/xbox/halo, with `ninja xbox`), set its
+    memory limit to the configured console's, and pack bin/ into an ISO;
+    returns the ISO"""
     jobs = str(os.cpu_count() or 4)
     env = nxdk_environment(config)
-    result = subprocess.run(["make", "-C", str(project), "-j", jobs], env=env,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    lines = [line for line in result.stdout.splitlines() if not line.startswith(("[ CC", "[ CXX", "[ AS"))]
+    if (project / "Makefile").is_file():
+        command = ["make", "-C", str(project), "-j", jobs]
+    elif project == ROOT / "build/xbox/halo":
+        command = ["ninja", "-C", str(ROOT), "xbox"]
+    else:
+        sys.exit(f"{project} is neither an nxdk project (no Makefile) nor build/xbox/halo")
+    result = subprocess.run(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    lines = [line for line in result.stdout.splitlines()
+             if not line.startswith(("[ CC", "[ CXX", "[ AS")) and " XBOX CC " not in line]
     if result.returncode != 0:
         print("\n".join(lines[-40:]))
         sys.exit(f"build of {project} failed")
     bin_dir = project / "bin"
+    if project == ROOT / "build/xbox/halo":
+        add_maps(config, bin_dir / "maps")
     set_memory_limit(bin_dir / "default.xbe", config["console"].get("memory", "128") != "128")
     iso = ROOT / "build/xbox" / f"{project.name}.iso"
     iso.parent.mkdir(parents=True, exist_ok=True)
