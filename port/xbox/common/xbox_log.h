@@ -2,7 +2,7 @@
 XBOX_LOG.H
 
 Log lines from an Xbox program to the development loop (tools/xbox_dev.py):
-COM1 of the debug kits' SuperIO chip, which xemu emulates
+COM2 of the debug kits' SuperIO chip, which xemu emulates
 (-device lpc47m157), and the screen.
 */
 
