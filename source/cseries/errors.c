@@ -132,7 +132,12 @@ static void write_to_debug_file(
 
 	if (!file)
 	{
+#ifdef HALO_NSPIRE
+		/* the calculator's link software sends only files named .tns */
+		FILE *opened = fopen("d:\\debug.txt.tns", "a+b");
+#else
 		FILE *opened = fopen("d:\\debug.txt", "a+b");
+#endif
 
 		if (!opened)
 		{
@@ -238,6 +243,14 @@ void error(
 		0x61,
 		priority>=0 && priority<NUMBER_OF_ERROR_MESSAGE_PRIORITIES);
 
+#ifdef HALO_NSPIRE
+	/* the TI-Nspire's screen is small and drawing text costs a frame time:
+	silent errors only go to debug.txt */
+	if (priority == _error_silent)
+	{
+		priority = _error_log;
+	}
+#endif
 	if (error_globals.overflow_suppression && priority == _error_silent)
 	{
 		long time = system_milliseconds();

@@ -185,6 +185,18 @@ long game_time_get(
 	return game_time_globals->local_time;
 }
 
+#ifdef HALO_NSPIRE
+/* the game time, or NONE before a game is under way (port/nspire/src/
+nspire_demo.c) */
+long nspire_game_time_or_none(
+	void)
+{
+	if (!game_time_globals || !game_time_globals->initialized)
+		return NONE;
+	return game_time_globals->local_time;
+}
+#endif
+
 short game_time_get_elapsed(
 	void)
 {
@@ -387,7 +399,20 @@ void game_time_update(
 				connection = TICKS_PER_SECOND;
 				break;
 			case _game_connection_local:
+#ifdef HALO_NSPIRE
+				/* the TI-Nspire draws a frame in seconds: one tick a frame keeps
+				each frame answering the controls, and a tick costs a good part
+				of a frame (the game runs slowed down either way; this is a
+				stopgap until ticks are cheaper: port/nspire/README.md) */
+				{
+					extern int nspire_fast_forwarding(void);
+
+					/* (undrawn cutscenes run at the full 7) */
+					connection = nspire_fast_forwarding() ? 7 : NSPIRE_TICKS_PER_FRAME;
+				}
+#else
 				connection = 7;
+#endif
 				break;
 			default:
 				connection = 7;

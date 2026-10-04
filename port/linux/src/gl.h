@@ -8,6 +8,14 @@ SDL_GL_GetProcAddress once the context exists (gl_functions_load).
 #ifndef __HALO_LINUX_GL_H
 #define __HALO_LINUX_GL_H
 
+#ifdef HALO_NSPIRE
+/* The TI-Nspire has no OpenGL: its renderer draws in software
+(port/nspire/src/d3d8_soft.c). Only the types xgpu.h names. */
+typedef unsigned int GLuint;
+typedef unsigned int GLenum;
+typedef int GLint;
+#else
+
 /* prototypes are declared only to give each pointer its exact type */
 #define GL_GLEXT_PROTOTYPES 1
 /* the XDK defines APIENTRY as __stdcall; OpenGL on Linux uses cdecl (on
@@ -454,5 +462,7 @@ pointers, sees the declarations without these aliases */
 
 /* returns FALSE (and logs) if a required function is missing */
 int gl_functions_load(void);
+
+#endif /* HALO_NSPIRE */
 
 #endif

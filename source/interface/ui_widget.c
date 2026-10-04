@@ -1427,6 +1427,16 @@ static struct ui_widget_bss_prefix ui_widget_globals_storage;
 #define string_data ui_widget_globals_storage.string_data
 #define widget_globals ui_widget_globals_storage.widget_globals
 #define we_are_at_the_main_menu ui_widget_globals_storage.we_are_at_the_main_menu
+
+#ifdef HALO_NSPIRE
+/* the first deferred error code, for port/nspire/src/nspire_profile.c to
+watch: something writes single bytes over it (logged as error dialogs
+#-256, #-129, ...) */
+short *nspire_widget_error_watch(void)
+{
+	return &widget_globals.deferred_errors[0].error_code;
+}
+#endif
 #define dpad_event_times ui_widget_globals_storage.dpad_event_times
 real_argb_color ui_plasma_effect_color;
 short local_player_index_for_draw_string_and_hack_in_icons;
@@ -3137,6 +3147,33 @@ static __inline struct widget_instance *widget_instance_find_by_tag_index(
 	return result;
 }
 
+#ifdef HALO_NSPIRE
+/* (the TI-Nspire's main menu: the campaign alone, straight to choosing the
+difficulty, then the level the program's name asks for) whether a widget
+tag's name ends with the given one */
+static boolean nspire_widget_named(
+	long tag_index,
+	char const *ending)
+{
+	char const *name = tag_index != NONE ? tag_get_name(tag_index) : NULL;
+	size_t name_length, ending_length = strlen(ending);
+
+	if (!name)
+		return FALSE;
+	name_length = strlen(name);
+	return name_length >= ending_length && !strcmp(name + name_length - ending_length, ending);
+}
+
+/* the main menu's items left out: multiplayer, settings, the demos */
+static boolean nspire_widget_left_out(
+	long tag_index)
+{
+	return nspire_widget_named(tag_index, "main_menu\\main_menu_item_multiplayer") ||
+		nspire_widget_named(tag_index, "main_menu\\main_menu_item_settings") ||
+		nspire_widget_named(tag_index, "main_menu\\main_menu_item_game_demos");
+}
+#endif
+
 static void event_handler_dispatch(
 	struct widget_instance *widget,
 	struct ui_widget_definition *definition,
@@ -3144,6 +3181,25 @@ static void event_handler_dispatch(
 	struct ui_widget_event_handler_reference *handler,
 	boolean *calling_widget_deleted)
 {
+#ifdef HALO_NSPIRE
+	/* the campaign item: no player profiles, the difficulty at once */
+	struct ui_widget_event_handler_reference nspire_handler;
+
+	if (nspire_widget_named(widget->definition_tag_index, "main_menu\\main_menu_item_load_camp") &&
+		TEST_FLAG(handler->flags, _event_handler_open_widget_bit))
+	{
+		long difficulty_screen = tag_loaded(UI_WIDGET_DEFINITION_TAG,
+			"ui\\shell\\main_menu\\difficulty_select\\difficulty_select_list_screen");
+
+		if (difficulty_screen != NONE)
+		{
+			nspire_handler = *handler;
+			nspire_handler.flags &= ~FLAG(_event_handler_run_function_bit);
+			nspire_handler.widget_tag.index = difficulty_screen;
+			handler = &nspire_handler;
+		}
+	}
+#endif
 	boolean widget_deleted = FALSE;
 	boolean success = TRUE;
 	boolean function_failed = FALSE;
@@ -3493,6 +3549,10 @@ static boolean ui_widget_load_children_recursive(
 					reference->custom_controller_index);
 			}
 		}
+#ifdef HALO_NSPIRE
+		if (nspire_widget_left_out(reference->widget_tag.index))
+			continue;
+#endif
 		if (reference->widget_tag.index != NONE)
 		{
 			struct widget_instance *child = ui_widget_load_by_name_or_tag(
@@ -4128,6 +4188,35 @@ void display_error(
 	boolean modal,
 	boolean pause_game_time)
 {
+#ifdef HALO_NSPIRE
+	/* the TI-Nspire loads no user interface map to show the dialog with
+	(port/nspire/README.md): the error is only logged, once for each code
+	and caller (the file writes cost a frame's time when one repeats) */
+	{
+		static struct
+		{
+			short error_code;
+			void *caller;
+		} logged[16];
+		static long logged_count;
+		void *caller = __builtin_return_address(0);
+		long index;
+
+		for (index = 0; index < logged_count; index++)
+		{
+			if (logged[index].error_code == error_code && logged[index].caller == caller)
+				return;
+		}
+		if (logged_count == 16)
+			return;
+		logged[logged_count].error_code = error_code;
+		logged[logged_count].caller = caller;
+		logged_count++;
+		error(_error_log, "an error dialog (#%d for player %d, from %p) was not shown (logged once)", error_code,
+			local_player_index, caller);
+	}
+	return;
+#endif
 	if (cinematic_in_progress())
 	{
 		if (local_player_index == NONE)

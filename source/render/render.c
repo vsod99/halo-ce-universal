@@ -325,23 +325,76 @@ static void render_window(
 	parameters.window_index = render.window_index;
 	parameters.fog = render.fog;
 
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_render_visibility);
 	structure_visibility_compute();
+	NSPIRE_PROFILE_END(_nspire_profile_render_visibility);
+#ifdef HALO_NSPIRE
+	/* (for a while from the start: the level's clusters rendered, when they
+	change, with the camera's leaf and cluster, to find what leaves holes
+	in the level) */
+	{
+		extern void nspire_log(const char *format, ...);
+		static long frames, last_hash = -1;
+		long hash = render.leaf_index * 31 + render.cluster_index, index;
+		char list[200];
+		int length = 0;
+
+		for (index = 0; index < render.rendered_cluster_count; index++)
+			hash = hash * 33 + rendered_cluster_get(index)->cluster_index;
+		if (frames++ < 600 && hash != last_hash)
+		{
+			last_hash = hash;
+			for (index = 0; index < render.rendered_cluster_count && length < (int)sizeof(list) - 8; index++)
+				length += snprintf(list + length, sizeof(list) - length, " %d", rendered_cluster_get(index)->cluster_index);
+			list[length] = 0;
+			nspire_log("visibility (frame %ld): camera at %ld %ld %ld, leaf %ld, cluster %ld; %d clusters:%s",
+				frames, (long)render.camera.position.x, (long)render.camera.position.y, (long)render.camera.position.z,
+				render.leaf_index, render.cluster_index, (int)render.rendered_cluster_count, list);
+		}
+	}
+#endif
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_render_other);
 	player_effect_get_screen_flash(local_player_index, &parameters.screen_flash);
 	rasterizer_window_begin(&parameters);
 
 	if (!bink_playback_in_progress())
 	{
 		build_sprite_prepare_for_window();
+		NSPIRE_PROFILE_END(_nspire_profile_render_other);
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_render_sky);
 		render_sky();
+		NSPIRE_PROFILE_END(_nspire_profile_render_sky);
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_render_other);
 		first_person_weapon_render_update();
 		lights_preprocess_scene();
+		NSPIRE_PROFILE_END(_nspire_profile_render_other);
+#ifdef HALO_NSPIRE
+		/* the TI-Nspire draws the level's solid pass first: then the depth it
+		leaves hides objects behind the terrain, which its renderer skips
+		(port/nspire/src/soft_rasterizer.c, draw_hidden) */
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_render_level);
+		structure_render_preprocess();
+		structure_render_lightmaps();
+		NSPIRE_PROFILE_END(_nspire_profile_render_level);
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_render_objects);
+		render_objects();
+		NSPIRE_PROFILE_END(_nspire_profile_render_objects);
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_render_level_passes);
+#else
 		render_objects();
 		structure_render_preprocess();
 		structure_render_lightmaps();
+#endif
+#ifndef HALO_NSPIRE
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_render_level_passes);
+#endif
 		rasterizer_lens_flares_submit_occlusion_tests();
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_passes_lights);
 		render_object_shadows();
 		lights_render_diffuse();
+		NSPIRE_PROFILE_END(_nspire_profile_passes_lights);
 
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_passes_decals);
 		rasterizer_decals_begin(_decal_layer_light);
 		for (rendered_cluster_index = 0;
 			rendered_cluster_index < render.rendered_cluster_count;
@@ -359,9 +412,13 @@ static void render_window(
 			rasterizer_decals_draw(rendered_cluster_get(rendered_cluster_index)->cluster_index);
 		}
 		rasterizer_decals_end();
+		NSPIRE_PROFILE_END(_nspire_profile_passes_decals);
 
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_passes_diffuse);
 		structure_render_diffuse_texture();
+		NSPIRE_PROFILE_END(_nspire_profile_passes_diffuse);
 
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_passes_decals);
 		rasterizer_decals_begin(_decal_layer_primary);
 		for (rendered_cluster_index = 0;
 			rendered_cluster_index < render.rendered_cluster_count;
@@ -379,19 +436,28 @@ static void render_window(
 			rasterizer_decals_draw(rendered_cluster_get(rendered_cluster_index)->cluster_index);
 		}
 		rasterizer_decals_end();
+		NSPIRE_PROFILE_END(_nspire_profile_passes_decals);
 
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_passes_specular);
 		lights_render_specular();
 		structure_render_specular_lightmaps();
 		structure_render_reflection_lightmap_masks();
 		structure_render_reflection_mirrors();
 		structure_render_reflections();
+		NSPIRE_PROFILE_END(_nspire_profile_passes_specular);
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_passes_transparent);
 		structure_render_transparent_geometry();
 		structure_render_fog();
+		NSPIRE_PROFILE_END(_nspire_profile_passes_transparent);
+		NSPIRE_PROFILE_END(_nspire_profile_render_level_passes);
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_render_effects);
 		game_engine_post_rasterize_objects();
 		weather_particle_systems_render();
 		render_particles();
 		particle_systems_render();
 		render_contrails_normal();
+		NSPIRE_PROFILE_END(_nspire_profile_render_effects);
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_render_transparent);
 		rasterizer_transparent_geometry_draw(TRUE);
 
 		rasterizer_decals_begin(_decal_layer_water);
@@ -408,11 +474,37 @@ static void render_window(
 		rasterizer_transparent_geometry_stop();
 		structure_render_fog_screen();
 		rasterizer_lens_flares_draw();
+		NSPIRE_PROFILE_END(_nspire_profile_render_transparent);
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_render_hud);
+#ifdef HALO_NSPIRE
+		/* the TI-Nspire draws the 3D world at 160x120 and the HUD over it
+		at 320x240 (port/nspire/src/soft_rasterizer.c) */
+		{
+			extern void soft_rasterizer_resolve(void);
+
+			soft_rasterizer_resolve();
+		}
+#endif
+#ifdef HALO_NSPIRE
+		{
+			extern int soft_rasterizer_hud(int drawing);
+
+			/* (drawn every other frame: the rasterizer pastes the last
+			drawing's pixels between) */
+			if (soft_rasterizer_hud(TRUE))
+			{
+				interface_draw_screen();
+				soft_rasterizer_hud(FALSE);
+			}
+		}
+#else
 		interface_draw_screen();
+#endif
 		rasterizer_screen_flash();
 		halo_screen_ui_offset(TRUE);
 		render_ui_widgets(local_player_index, &rasterizer_camera->viewport_bounds);
 		halo_screen_ui_offset(FALSE);
+		NSPIRE_PROFILE_END(_nspire_profile_render_hud);
 	}
 
 	bink_playback_render();

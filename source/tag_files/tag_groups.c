@@ -4,6 +4,8 @@ TAG_GROUPS.C
 
 /* ---------- headers */
 
+/* (tag_groups.h's inline element lookup is for the callers) */
+#define TAG_GROUPS_C
 #include "cseries.h"
 #include "tag_files.h"
 #include "byte_swapping.h"

@@ -57,6 +57,26 @@ void data_initialize(struct data_array *data, const char *name, short maximum_co
 void *datum_try_and_get(struct data_array *data, long index);
 void data_verify(struct data_array *data);
 void *datum_get(struct data_array *data, long index);
+
+#if defined(HALO_NSPIRE) && !defined(DATA_C)
+/* (the Nspire port: called all over and costly on a slow CPU, so a datum
+in use is found inline; anything else goes to datum_get's checks) */
+static __inline__ void *datum_get_inline(struct data_array *data, long index)
+{
+	short identifier = (short)(index >> 16);
+	short absolute_index = (short)index;
+
+	if (data->valid && absolute_index >= 0 && absolute_index < data->count)
+	{
+		struct datum_header *header = (struct datum_header *)((char *)data->data + data->size * absolute_index);
+
+		if (header->identifier && (identifier ? identifier == header->identifier : !data->identifier_zero_invalid))
+			return header;
+	}
+	return datum_get(data, index);
+}
+#define datum_get datum_get_inline
+#endif
 struct data_array *data_new(const char *name, short maximum_count, short size);
 void data_dispose(struct data_array *data);
 void data_make_invalid(struct data_array *data);

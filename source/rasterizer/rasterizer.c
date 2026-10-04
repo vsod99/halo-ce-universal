@@ -739,6 +739,37 @@ void rasterizer_frame_begin(
 		rasterizer_debug_options.draw_environment = 2;
 	}
 
+#ifdef HALO_NSPIRE
+	/* The TI-Nspire draws in software (port/nspire/src/soft_rasterizer.c)
+	at a few frames a second at best: only the passes that make the picture
+	readable, the simplest models, and a shorter view. */
+	rasterizer_debug_options.draw_environment_shadows = FALSE;
+	rasterizer_debug_options.draw_environment_diffuse_lights = FALSE;
+	rasterizer_debug_options.draw_environment_decals = FALSE;
+	rasterizer_debug_options.draw_environment_specular_lights = FALSE;
+	rasterizer_debug_options.draw_environment_specular_lightmaps = FALSE;
+	rasterizer_debug_options.draw_environment_reflection_lightmap_masks = FALSE;
+	rasterizer_debug_options.draw_environment_reflection_mirrors = FALSE;
+	rasterizer_debug_options.draw_environment_reflections = FALSE;
+	rasterizer_debug_options.draw_environment_fog = FALSE;
+	rasterizer_debug_options.draw_environment_fog_screen = FALSE;
+	rasterizer_debug_options.draw_water = FALSE;
+	rasterizer_debug_options.draw_lens_flares = FALSE;
+	rasterizer_debug_options.draw_detail_objects = FALSE;
+	rasterizer_debug_options.draw_debug_geometry = FALSE;
+	rasterizer_debug_options.fog_atmospheric_enabled = FALSE;
+	rasterizer_debug_options.fog_planar_enabled = FALSE;
+	rasterizer_debug_options.bump_mapping_enabled = FALSE;
+	rasterizer_debug_options.active_camouflage_multipass_enabled = FALSE;
+	rasterizer_debug_options.plasma_energy_enabled = FALSE;
+	rasterizer_debug_options.lens_flare_occlusion_enabled = FALSE;
+	rasterizer_debug_options.lens_flare_sun_glow_enabled = FALSE;
+	rasterizer_debug_options.screen_effects_enabled = FALSE;
+	rasterizer_debug_options.soft_filter_enabled = FALSE;
+	rasterizer_debug_options.debug_model_lod = 0;
+	rasterizer_globals.far_clip_distance = 128.f;
+#endif
+
 	if (rasterizer_globals.near_clip_distance == 0.f)
 		rasterizer_globals.near_clip_distance = rasterizer_global_defaults.near_clip_distance;
 	if (rasterizer_globals.far_clip_distance == 0.f)

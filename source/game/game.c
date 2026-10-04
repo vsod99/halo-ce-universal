@@ -314,30 +314,52 @@ void game_tick(
 
 	remove_quitting_players_from_game();
 	game_allegiance_update();
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_units);
 	units_update();
+	NSPIRE_PROFILE_END(_nspire_profile_units);
 	/* (the host's actors drive the host's units, which a client of the
 	distributed netcode has from the host: its own would fight the host's
 	positions, and could place objects of their own) */
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_ai);
 	if (!network_game_distributed_client())
 		ai_update();
+	NSPIRE_PROFILE_END(_nspire_profile_ai);
 	players_update_before_game();
 
 	seconds_per_tick = game_globals->players_are_double_speed
 		? 1.0f / (2 * TICKS_PER_SECOND)
 		: 1.0f / TICKS_PER_SECOND;
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_effects);
 	effects_update(seconds_per_tick);
+	NSPIRE_PROFILE_END(_nspire_profile_effects);
 	lock_global_random_seed();
 	rumble_update();
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_first_person_weapons);
 	first_person_weapons_update();
+	NSPIRE_PROFILE_END(_nspire_profile_first_person_weapons);
 	unlock_global_random_seed();
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_other_updates);
 	game_engine_update();
 	editor_update();
+	NSPIRE_PROFILE_END(_nspire_profile_other_updates);
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_scripts);
 	hs_update();
+	NSPIRE_PROFILE_END(_nspire_profile_scripts);
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_other_updates);
 	recorded_animations_update();
+	NSPIRE_PROFILE_END(_nspire_profile_other_updates);
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_objects);
 	objects_update();
+	NSPIRE_PROFILE_END(_nspire_profile_objects);
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_other_updates);
 	players_update_after_game();
+	NSPIRE_PROFILE_END(_nspire_profile_other_updates);
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_hud);
 	hud_update();
+	NSPIRE_PROFILE_END(_nspire_profile_hud);
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_other_updates);
 	player_effect_update();
+	NSPIRE_PROFILE_END(_nspire_profile_other_updates);
 
 	profile_exit(game_update_section);
 	collision_log_end_period();

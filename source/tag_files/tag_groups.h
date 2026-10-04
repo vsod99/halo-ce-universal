@@ -123,6 +123,19 @@ long verify_tag_reference(struct tag_reference const *reference);
 void *tag_data_get_pointer(struct tag_data const *data, long offset, long size);
 void *tag_block_get_element_with_size(struct tag_block const *block, long index, long element_size);
 
+#if defined(HALO_NSPIRE) && !defined(TAG_GROUPS_C)
+/* (the Nspire port: a valid element found inline; anything else goes to the
+function's checks) */
+static __inline__ void *tag_block_get_element_with_size_inline(struct tag_block const *block, long index,
+	long element_size)
+{
+	if (block && (unsigned long)index < (unsigned long)block->count && block->address)
+		return (char *)block->address + index * element_size;
+	return tag_block_get_element_with_size(block, index, element_size);
+}
+#define tag_block_get_element_with_size tag_block_get_element_with_size_inline
+#endif
+
 /* ---------- prototypes/CACHE_FILES.C */
 
 long tag_loaded(long group_tag, const char *name);

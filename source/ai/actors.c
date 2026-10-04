@@ -1723,7 +1723,7 @@ static void actor_input_update(
 		if (actor->meta.encounter_index != NONE)
 		{
 			struct actor_debug_info *actor_debug_info =
-				&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+				&actor_debug_array[ACTOR_DEBUG_INDEX(actor_index)];
 			struct encounter_definition *encounter_definition =
 				TAG_BLOCK_GET_ELEMENT(
 					&global_scenario_get()->ai_encounters,
@@ -2344,7 +2344,7 @@ long actor_new(
 				actor->firing_positions.pursuit_prop_index = NONE;
 
 				actor_debug_info =
-					&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+					&actor_debug_array[ACTOR_DEBUG_INDEX(actor_index)];
 				csmemset(actor_debug_info, 0, sizeof(*actor_debug_info));
 				actor_debug_info->last_path_refresh = NONE;
 				actor_debug_info->last_projectile_aiming_time = NONE;
@@ -4179,13 +4179,21 @@ static void actor_update(
 	if (actor_general_update(actor_index))
 	{
 		actor_get_timeslice(actor_index);
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_ai_perception);
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_ai_input);
 		actor_input_update(actor_index);
+		NSPIRE_PROFILE_END(_nspire_profile_ai_input);
 		actor_perception_update(actor_index);
+		NSPIRE_PROFILE_END(_nspire_profile_ai_perception);
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_ai_decision);
 		actor_situation_update(actor_index);
 		actor_emotion_update(actor_index);
 		actor_clear_orders(actor_index);
 		actor_decision_loop(actor_index);
+		NSPIRE_PROFILE_END(_nspire_profile_ai_decision);
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_ai_action);
 		actor_action_update(actor_index);
+		NSPIRE_PROFILE_END(_nspire_profile_ai_action);
 
 		if (!actor->meta.dormant)
 		{
@@ -4196,14 +4204,20 @@ static void actor_update(
 			else
 			{
 				actor_clear_output(actor_index);
+				NSPIRE_PROFILE_BEGIN(_nspire_profile_ai_action);
 				actor_action_control(actor_index);
+				NSPIRE_PROFILE_END(_nspire_profile_ai_action);
 				actor_communication_update(actor_index);
 				actor_conversation_control(actor_index);
+				NSPIRE_PROFILE_BEGIN(_nspire_profile_ai_movement);
 				actor_destination_update(actor_index);
 				actor_look_affect_movement(actor_index);
 				actor_move_update(actor_index);
 				actor_look_update(actor_index);
+				NSPIRE_PROFILE_END(_nspire_profile_ai_movement);
+				NSPIRE_PROFILE_BEGIN(_nspire_profile_ai_combat);
 				actor_combat_update(actor_index);
+				NSPIRE_PROFILE_END(_nspire_profile_ai_combat);
 				actor_unit_control(actor_index);
 			}
 		}

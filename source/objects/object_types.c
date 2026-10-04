@@ -768,6 +768,21 @@ boolean object_type_update(
 	for (i = 0; definition->part_definitions[i]; i++)
 	{
 		struct object_type_definition *current_definition = definition->part_definitions[i];
+#ifdef HALO_NSPIRE
+		/* (a biped's parts, the unit's and the biped's own, timed apart) */
+		if (current_definition->datum_update && i>0 && object_get(object_index)->object.type==_object_type_biped)
+		{
+			long section = i==1 ? _nspire_profile_biped_unit_part : _nspire_profile_biped_part;
+			boolean used;
+
+			NSPIRE_PROFILE_BEGIN(section);
+			used = current_definition->datum_update(object_index);
+			NSPIRE_PROFILE_END(section);
+			if (used)
+				result = TRUE;
+			continue;
+		}
+#endif
 		if (current_definition->datum_update && current_definition->datum_update(object_index))
 		{
 			result = TRUE;

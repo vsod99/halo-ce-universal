@@ -1955,7 +1955,9 @@ void ai_update(
 		else if (ai_globals->ai_active)
 		{
 			ai_conversation_update();
+			NSPIRE_PROFILE_BEGIN(_nspire_profile_ai_encounters);
 			encounters_update();
+			NSPIRE_PROFILE_END(_nspire_profile_ai_encounters);
 			actors_update();
 			ai_globals->ai_has_control_data = TRUE;
 		}

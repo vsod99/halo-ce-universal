@@ -513,6 +513,13 @@ void bink_playback_start(
 {
 	bink_get_memory_available("begin bink_playback_start");
 
+#ifdef HALO_NSPIRE
+	/* (the TI-Nspire plays no movies: the main menu's background among
+	them, which would take more of its small texture cache than there is) */
+	(void)full_pathname;
+	(void)flags;
+	return;
+#endif
 	if (!bink_globals.initialized)
 		return;
 	if (cache_files_precache_in_progress())

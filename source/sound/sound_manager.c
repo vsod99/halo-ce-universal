@@ -2328,6 +2328,12 @@ void sound_stop_all(
 			sound_index = data_next_index(sound_data, sound_index);
 		}
 
+#ifdef HALO_NSPIRE
+		/* (the TI-Nspire has no sound device: its arrays were never made
+		valid, and the first change of maps, from the main menu's, found
+		them so) */
+		if (looping_sound_data && looping_sound_data->valid)
+#endif
 		data_delete_all(looping_sound_data);
 		sound_manager_globals.platform_definition->flush();
 	}
@@ -3148,7 +3154,8 @@ void sound_dispose_from_old_map(
 	}
 
 	sound_stop_all();
-	if (looping_sound_data)
+	/* (the TI-Nspire has no sound device: the array was never made valid) */
+	if (looping_sound_data && looping_sound_data->valid)
 	{
 		data_delete_all(looping_sound_data);
 	}

@@ -657,6 +657,11 @@ short saved_game_perform_file_system_checks(
 	XGAME_FIND_DATA find_data;
 	short result = _saved_game_file_system_ok;
 
+#ifdef HALO_NSPIRE
+	/* (the TI-Nspire has no Xbox hard drive to check: its checkpoint is a
+	file of its own, port/nspire; the main menu would refuse to go on) */
+	return _saved_game_file_system_ok;
+#endif
 	if (GetDiskFreeSpaceEx(
 			wide_to_ascii(memory_unit_root_path[_memory_unit_hard_drive], root_path, sizeof(root_path)),
 			&free_bytes_available,

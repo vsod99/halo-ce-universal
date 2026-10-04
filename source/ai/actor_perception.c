@@ -2511,7 +2511,7 @@ perception_factor_ready:
 				{
 					struct actor_debug_info *debug =
 						&actor_debug_array[
-							DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+							ACTOR_DEBUG_INDEX(actor_index)];
 
 					if (target_is_player)
 					{
@@ -2693,7 +2693,7 @@ short actor_audibility_at_point(
 		{
 			struct actor_debug_info *debug =
 				&actor_debug_array[
-					DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+					ACTOR_DEBUG_INDEX(actor_index)];
 
 			debug->field_A8 = maximum_distance;
 			debug->field_A4 = TRUE;
@@ -6214,10 +6214,14 @@ void actor_perception_update(
 	{
 		if (actor->meta.timeslice)
 		{
+			NSPIRE_PROFILE_BEGIN(_nspire_profile_ai_perception_refresh);
 			actor_perception_refresh(actor_index);
+			NSPIRE_PROFILE_END(_nspire_profile_ai_perception_refresh);
 		}
 
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_ai_danger_zone);
 		actor_perception_refresh_danger_zone(actor_index);
+		NSPIRE_PROFILE_END(_nspire_profile_ai_danger_zone);
 
 		if (actor->danger_zone.danger_type > _actor_danger_zone_none)
 		{
@@ -6417,7 +6421,14 @@ void actor_perception_update(
 			}
 
 			if (!prop_serviced &&
-				prop_timer >= actor->meta.highest_prop_timer)
+				prop_timer >= actor->meta.highest_prop_timer
+#ifdef HALO_NSPIRE
+				/* (the TI-Nspire: an actor's one full look at a prop a tick,
+				line of sight and all, every other tick, actors taking turns;
+				the props it follows keep their positions each tick) */
+				&& !((game_time_get() + DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)) & 1)
+#endif
+				)
 			{
 				refresh_status = TRUE;
 				refresh_position = TRUE;
@@ -6483,17 +6494,21 @@ void actor_perception_update(
 
 			if (refresh_position)
 			{
+				NSPIRE_PROFILE_BEGIN(_nspire_profile_ai_prop_position);
 				prop_position_refresh(
 					actor_index,
 					iterator.index,
 					&position,
 					FALSE,
 					refresh_status);
+				NSPIRE_PROFILE_END(_nspire_profile_ai_prop_position);
 			}
 
 			if (refresh_status)
 			{
+				NSPIRE_PROFILE_BEGIN(_nspire_profile_ai_prop_status);
 				prop_status_refresh(actor_index, iterator.index, &position);
+				NSPIRE_PROFILE_END(_nspire_profile_ai_prop_status);
 			}
 		}
 
@@ -6518,7 +6533,7 @@ void actor_perception_update(
 
 		case _prop_state_becoming_acknowledged:
 			{
-				struct actor_debug_info *debug = &actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+				struct actor_debug_info *debug = &actor_debug_array[ACTOR_DEBUG_INDEX(actor_index)];
 
 				if (prop->perception == _actor_perception_none)
 				{

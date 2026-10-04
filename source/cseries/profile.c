@@ -284,7 +284,13 @@ enum
 {
 	MAXIMUM_PROFILE_SECTIONS = 256,
 	MAXIMUM_GAME_TICKS_PER_FRAME = 150,
+#ifdef HALO_NSPIRE
+	/* the history is a ring (a frame is 4 KB); the TI-Nspire keeps 8 frames,
+	not 1 MB of them */
+	MAXIMUM_PROFILE_FRAMES = 8,
+#else
 	MAXIMUM_PROFILE_FRAMES = 256,
+#endif
 	MAXIMUM_PROFILE_WINDOWS = 4,
 };
 

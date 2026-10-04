@@ -673,6 +673,11 @@ static void main_update_time(
 static void main_frame_rate_debug(
 	void);
 
+#ifdef HALO_NSPIRE
+/* whether a map has been loaded yet (main_new_map) */
+static boolean nspire_map_loaded;
+#endif
+
 static void main_new_map(
 	struct game_options *options);
 static void main_game_render(
@@ -1415,6 +1420,9 @@ static void main_new_map(
 	if (game_load(options))
 	{
 		game_initialize_for_new_map();
+#ifdef HALO_NSPIRE
+		nspire_map_loaded = TRUE;
+#endif
 	}
 	else
 	{
@@ -1447,6 +1455,14 @@ static void main_new_map(
 
 	if (main_globals.allow_persistent_storage)
 		game_state_try_and_load_from_persistent_storage();
+#ifdef HALO_NSPIRE
+	{
+		/* back to the checkpoint the last run quit with, if any */
+		extern void game_state_nspire_resume(void);
+
+		game_state_nspire_resume();
+	}
+#endif
 	ui_widgets_disable_pause_game(30);
 
 	return;
@@ -1760,8 +1776,15 @@ void main_load_ui_scenario(
 	csstrncpy(options.map_name, "levels\\ui\\ui", NUMBEROF(options.map_name) - 1);
 	options.map_name[NUMBEROF(options.map_name) - 1] = 0;
 	game_precache_new_map(options.map_name, TRUE);
-	game_dispose_from_old_map();
-	game_unload();
+#ifdef HALO_NSPIRE
+	/* (the TI-Nspire starts at the main menu: then there is no map yet to
+	dispose of, and its data arrays were never made) */
+	if (nspire_map_loaded)
+#endif
+	{
+		game_dispose_from_old_map();
+		game_unload();
+	}
 	game_engine_dispose();
 	game_set_game_variant(NULL);
 	main_globals.main_menu_scenario_loaded = TRUE;
@@ -2235,6 +2258,12 @@ static void main_update_time(
 		main_update_time_unthrottled();
 		return;
 	}
+#ifdef HALO_NSPIRE
+	/* the TI-Nspire has no vertical blank to pace frames by, and draws far
+	below the display's rate: frames are timed by the clock alone */
+	main_update_time_unthrottled();
+	return;
+#endif
 	end_milliseconds = system_milliseconds();
 	minimum_target_index = MAX(
 		main_globals.rasterizer_target_index,
@@ -2479,7 +2508,11 @@ void main_rasterizer_throttle(
 	did_throttle = FALSE;
 	main_globals.rasterizer_throttle_start_index =
 		rasterizer_globals.frame_and_vertical_blank_index + 1;
+#ifdef HALO_NSPIRE
+	if (FALSE)
+#else
 	if (rasterizer_globals.framerate_throttle && !halo_interpolation_enabled())
+#endif
 	{
 		target_index = main_globals.rasterizer_target_index;
 		target_index--;
@@ -2575,7 +2608,11 @@ static void main_setup_connection(
 		options.map_name[NUMBEROF(options.map_name) - 1] = 0;
 		options.difficulty = global_difficulty_level;
 		game_precache_new_map(options.map_name, TRUE);
+#ifndef HALO_NSPIRE
+		/* (on the TI-Nspire this is the first map: there is none to dispose
+		of, and its data arrays were never made) */
 		game_dispose_from_old_map();
+#endif
 		main_new_map(&options);
 	}
 
@@ -2844,6 +2881,16 @@ void halt_and_catch_fire(
 	struct rasterizer_frame_begin_parameters frame_parameters;
 	struct rasterizer_window_begin_parameters window_parameters;
 
+#ifdef HALO_NSPIRE
+	/* the TI-Nspire shows the error and exits (putting its memory and page
+	tables back) rather than drawing it until the calculator is reset */
+	{
+		extern void nspire_fatal(const char *format, ...);
+
+		nspire_fatal("%s", error_get());
+	}
+#endif
+
 	if (!global_screenshot_count.halt_recursion_lock)
 	{
 		scenario = global_scenario_try_and_get();
@@ -3074,11 +3121,30 @@ void main_loop(
 
 	if (!game_in_editor())
 	{
+#ifdef HALO_NSPIRE
+		/* the level the program's name asks for (port/nspire/src/nspire_main.c) */
+		extern const char *nspire_level_name(void);
+
+		csprintf(main_globals.soloplayer_map_name, "levels\\%s\\%s", nspire_level_name(), nspire_level_name());
+#else
 		csstrncpy(main_globals.soloplayer_map_name, "levels\\b30\\b30", NUMBEROF(main_globals.soloplayer_map_name)-1);
+#endif
 		main_globals.soloplayer_map_name[NUMBEROF(main_globals.soloplayer_map_name)-1] = '\0';
 	}
 
+#ifdef HALO_NSPIRE
+	/* The TI-Nspire plays one campaign level: from a main menu cut down to
+	the campaign and its difficulty when ui.map.tns is next to the program
+	(source/interface/ui_widget.c), else at once (main_setup_connection
+	loads the level). */
+	{
+		extern int nspire_main_menu_present(void);
+
+		main_globals.want_to_be_at_main_menu = nspire_main_menu_present() != 0;
+	}
+#else
 	main_globals.want_to_be_at_main_menu = !game_in_editor();
+#endif
 	main_globals.switch_to_structure_bsp_index = NONE;
 	main_globals.halt_time_scale = TRUE;
 
@@ -3179,7 +3245,9 @@ void main_loop(
 		}
 
 		profile_frame_start();
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_input);
 		input_frame_begin();
+		NSPIRE_PROFILE_END(_nspire_profile_input);
 		input_update();
 		input_abstraction_update();
 		shell_idle();
@@ -3223,6 +3291,21 @@ void main_loop(
 			}
 
 			main_update_time();
+#ifdef HALO_NSPIRE
+			/* a demo's frames run a fixed time, for its ticks to come out alike
+			however long the frames take (port/nspire/src/nspire_demo.c); the
+			half tick over keeps the floor in game_time_update off a tick short */
+			{
+				extern int nspire_demo_active(void);
+				extern int nspire_fast_forwarding(void);
+
+				if (nspire_demo_active())
+				{
+					main_globals.seconds_elapsed =
+						((nspire_fast_forwarding() ? 7 : NSPIRE_TICKS_PER_FRAME) + 0.5f) / TICKS_PER_SECOND;
+				}
+			}
+#endif
 			process_ui_widgets();
 			bink_playback_update();
 
@@ -3244,7 +3327,9 @@ void main_loop(
 				{
 					debug_keys_update();
 					cheats_update();
+					NSPIRE_PROFILE_BEGIN(_nspire_profile_player_control);
 					player_control_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
+					NSPIRE_PROFILE_END(_nspire_profile_player_control);
 
 					connection = main_globals.connection;
 					if (connection>_game_connection_local && connection<=_game_connection_network_server && !network_game_client_end_frame())
@@ -3253,7 +3338,9 @@ void main_loop(
 						network_game_abort();
 					}
 
+					NSPIRE_PROFILE_BEGIN(_nspire_profile_game_ticks);
 					game_time_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
+					NSPIRE_PROFILE_END(_nspire_profile_game_ticks);
 
 					render_frame = main_globals.main_menu_scenario_loaded ||
 						(main_globals.halt_time_scale &&
@@ -3262,9 +3349,20 @@ void main_loop(
 					if (halo_interpolation_enabled())
 						render_frame = main_globals.main_menu_scenario_loaded || main_globals.halt_time_scale;
 					render_frame &= !game_engine_running() || game_time_get()>=3;
+#ifdef HALO_NSPIRE
+					/* cutscenes run undrawn unless asked for (port/nspire/src/xinput_nspire.c) */
+					{
+						extern int nspire_fast_forward(int cinematic);
+
+						if (nspire_fast_forward(cinematic_in_progress()))
+							render_frame = FALSE;
+					}
+#endif
 
 					collision_log_continue_period(1);
+					NSPIRE_PROFILE_BEGIN(_nspire_profile_director);
 					director_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
+					NSPIRE_PROFILE_END(_nspire_profile_director);
 					observer_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
 					collision_log_end_period();
 					game_engine_update_non_deterministic((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
@@ -3279,7 +3377,9 @@ void main_loop(
 				{
 					profile_render_start();
 					render_interpolation_frame_begin();
+					NSPIRE_PROFILE_BEGIN(_nspire_profile_render);
 					main_game_render((double)main_globals.seconds_elapsed);
+					NSPIRE_PROFILE_END(_nspire_profile_render);
 					render_interpolation_frame_end();
 					profile_render_end();
 				}
@@ -3295,7 +3395,9 @@ void main_loop(
 
 			if (render_frame && !debug_no_drawing)
 			{
+				NSPIRE_PROFILE_BEGIN(_nspire_profile_present);
 				main_present_frame();
+				NSPIRE_PROFILE_END(_nspire_profile_present);
 			}
 		}
 

@@ -28,3 +28,11 @@ original/
 
 # CI build outputs (tools/ci_build.py)
 dist/
+
+# macOS folder metadata
+.DS_Store
+
+# TI-Nspire probe build outputs (port/nspire/probe/Makefile)
+port/nspire/probe/*.o
+port/nspire/probe/*.elf
+port/nspire/probe/*.tns

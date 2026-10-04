@@ -618,6 +618,13 @@ void _rasterizer_model_end(
 			rasterizer_set_frustum_z(0.0f, 0.0f);
 		}
 		local_parameters = NULL;
+#ifdef HALO_NSPIRE
+		{
+			extern void soft_rasterizer_set_object(long object_index);
+
+			soft_rasterizer_set_object(-1);
+		}
+#endif
 	}
 
 	return;
@@ -650,6 +657,15 @@ void _rasterizer_model_begin(
 
 		local_parameters = parameters;
 		local_parameters_queued_flag = FALSE;
+#ifdef HALO_NSPIRE
+		/* (the rasterizer keeps what it learns of a model's parts, whether
+		they showed, per model drawn: soft_rasterizer.c, part_hidden) */
+		{
+			extern void soft_rasterizer_set_object(long object_index);
+
+			soft_rasterizer_set_object(parameters->unique_identifier);
+		}
+#endif
 		local_do_not_change_z_stencil_states =
 			do_not_change_z_stencil_states;
 

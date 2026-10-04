@@ -298,6 +298,13 @@ char const *cache_files_map_directory(
 		break;
 	}
 
+#ifdef HALO_NSPIRE
+	/* the TI-Nspire's one converted map is next to the program, where its
+	loader opens it (port/nspire/game/cache_files_nspire.c); there is no maps
+	folder */
+	return map_directory;
+#endif
+
 	if (!file_exists(file_reference_create_from_path(&reference, map_directory, TRUE)))
 	{
 		for (directory_index = 0; data_00316820[directory_index]; directory_index++)
@@ -688,7 +695,9 @@ long scenario_tags_load(
 		tag_cache_base_address = physical_memory_get_tag_cache_base_address();
 		if (cache_file_header_verify(&cache_file_globals.header, scenario_name, TRUE))
 		{
+#ifndef HALO_NSPIRE /* paged: filling it would page in all 22 MB */
 			csmemset(tag_cache_base_address, 0xCD, 0x01600000);
+#endif
 			cache_file_read(
 				NONE,
 				cache_file_globals.header.tag_data_offset,
@@ -740,10 +749,12 @@ boolean scenario_structure_bsp_load(
 	byte *tag_cache_base_address;
 
 	tag_cache_base_address = physical_memory_get_tag_cache_base_address();
+#ifndef HALO_NSPIRE /* paged (port/nspire/src/nspire_paging.c) */
 	csmemset(
 		tag_cache_base_address + cache_file_globals.header.tag_data_size,
 		0xCD,
 		0x01600000 - cache_file_globals.header.tag_data_size);
+#endif
 	{
 		boolean read_complete;
 
@@ -811,8 +822,24 @@ void *tag_get(
 {
 	char expected_group[16];
 	char returned_group[16];
+	struct cache_file_tag_instance *tag_instance;
 
-	struct cache_file_tag_instance *tag_instance = cache_get_tag_instance(tag_index);
+#ifdef HALO_NSPIRE
+	/* (the Nspire port: called all over, so a sound request is answered
+	before the checks below, which a bad one still meets) */
+	if (global_tag_instances && cache_file_globals.tag_header && (short)tag_index >= 0 &&
+		(short)tag_index < cache_file_globals.tag_header->tag_count)
+	{
+		tag_instance = &global_tag_instances[(short)tag_index];
+		if ((!(tag_index & 0xFFFF0000) || tag_instance->tag_index == tag_index) && tag_instance->base_address &&
+			(tag_instance->group_tag == group_tag || tag_instance->parent_group_tags[0] == group_tag ||
+				tag_instance->parent_group_tags[1] == group_tag))
+		{
+			return tag_instance->base_address;
+		}
+	}
+#endif
+	tag_instance = cache_get_tag_instance(tag_index);
 	match_vassert(
 		"c:\\halo\\SOURCE\\cache\\cache_files.c",
 		298,

@@ -111,6 +111,11 @@ const char *attract_mode_get_localized_movie_path(
 	};
 
 	match_assert("c:\\halo\\SOURCE\\interface\\attract_mode.c", 163, movie>=0 && movie<NUMBER_OF_BINK_MOVIES);
+#ifdef HALO_NSPIRE
+	/* (the TI-Nspire has no movies: none looked for, nor complained of) */
+	bss_00453ae8[0] = '\0';
+	return bss_00453ae8;
+#endif
 
 	switch (XGetLanguage())
 	{

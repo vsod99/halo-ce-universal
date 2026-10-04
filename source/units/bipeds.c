@@ -1580,7 +1580,16 @@ static void biped_verify_object_vectors(
 	long biped_index,
 	char const *state)
 {
-	struct biped_datum *biped = biped_get(biped_index);
+	struct biped_datum *biped;
+
+#ifdef HALO_NSPIRE
+	/* (the Nspire port: checked once a tick, at its end, not between each
+	step: a debugging aid the retail game compiled out, in soft floating
+	point six times a biped a tick) */
+	if (strcmp(state, "post-update"))
+		return;
+#endif
+	biped = biped_get(biped_index);
 
 	if (!valid_real_vector3d_axes2(&biped->object.forward, &biped->object.up))
 	{
@@ -2334,6 +2343,114 @@ static void biped_find_nearby_support_surface(
 	return;
 }
 
+#ifdef HALO_NSPIRE
+/* (the Nspire port) A biped's move through the world (collision_move_pill,
+most of its tick's cost) given the same start as last tick comes out the
+same unless something around it moved: a biped standing still has the last
+tick's answer every other tick, a tick late at most for what comes at it. */
+/* (off: no measurable gain in the beach battle, where bipeds mostly move,
+and a crash returning through a clobbered address followed it there) */
+#ifndef NSPIRE_BIPED_COLLISION_MEMO
+#define NSPIRE_BIPED_COLLISION_MEMO 0
+#endif
+#define BIPED_COLLISION_MEMOS 128
+#define BIPED_COLLISION_MEMO_PLANES 4
+
+struct biped_collision_memo
+{
+	long biped_index;
+	long time;
+	boolean reused;
+	unsigned long flags;
+	real_point3d position;
+	real_vector3d velocity;
+	real height, width;
+	real_point3d clipped_position;
+	real_vector3d clipped_velocity;
+	short collision_count;
+	struct collision_plane collisions[BIPED_COLLISION_MEMO_PLANES];
+};
+
+static struct biped_collision_memo biped_collision_memos[BIPED_COLLISION_MEMOS];
+
+static boolean biped_collision_memo_matches(
+	struct biped_collision_memo const *memo,
+	unsigned long flags,
+	real_point3d const *position,
+	real_vector3d const *velocity,
+	real height,
+	real width)
+{
+	return memo->flags == flags &&
+		!memcmp(&memo->position, position, sizeof(*position)) &&
+		!memcmp(&memo->velocity, velocity, sizeof(*velocity)) &&
+		!memcmp(&memo->height, &height, sizeof(height)) &&
+		!memcmp(&memo->width, &width, sizeof(width));
+}
+
+static boolean biped_collision_memo_reuse(
+	long biped_index,
+	unsigned long flags,
+	real_point3d const *position,
+	real_vector3d const *velocity,
+	real height,
+	real width,
+	real_point3d *clipped_position,
+	real_vector3d *clipped_velocity,
+	short *collision_count,
+	struct collision_plane *collisions)
+{
+	struct biped_collision_memo *memo =
+		&biped_collision_memos[DATUM_INDEX_TO_ABSOLUTE_INDEX(biped_index) % BIPED_COLLISION_MEMOS];
+	long time = game_time_get();
+
+	if (memo->biped_index != biped_index || memo->time != time - 1 || memo->reused ||
+		!biped_collision_memo_matches(memo, flags, position, velocity, height, width))
+	{
+		return FALSE;
+	}
+	*clipped_position = memo->clipped_position;
+	*clipped_velocity = memo->clipped_velocity;
+	*collision_count = memo->collision_count;
+	memcpy(collisions, memo->collisions, sizeof(struct collision_plane) * memo->collision_count);
+	memo->time = time;
+	memo->reused = TRUE;
+	return TRUE;
+}
+
+static void biped_collision_memo_keep(
+	long biped_index,
+	unsigned long flags,
+	real_point3d const *position,
+	real_vector3d const *velocity,
+	real height,
+	real width,
+	real_point3d const *clipped_position,
+	real_vector3d const *clipped_velocity,
+	short collision_count,
+	struct collision_plane const *collisions)
+{
+	struct biped_collision_memo *memo =
+		&biped_collision_memos[DATUM_INDEX_TO_ABSOLUTE_INDEX(biped_index) % BIPED_COLLISION_MEMOS];
+
+	memo->biped_index = NONE;
+	if (collision_count < 0 || collision_count > BIPED_COLLISION_MEMO_PLANES)
+		return;
+	memo->biped_index = biped_index;
+	memo->time = game_time_get();
+	memo->reused = FALSE;
+	memo->flags = flags;
+	memo->position = *position;
+	memo->velocity = *velocity;
+	memo->height = height;
+	memo->width = width;
+	memo->clipped_position = *clipped_position;
+	memo->clipped_velocity = *clipped_velocity;
+	memo->collision_count = collision_count;
+	memcpy(memo->collisions, collisions, sizeof(struct collision_plane) * collision_count);
+}
+#endif
+
 static void biped_update_physics(
 	struct biped_physics *physics)
 {
@@ -2592,6 +2709,12 @@ static void biped_update_physics(
 		clipped_velocity.k = 0.f;
 		collision_count = 1;
 	}
+#if defined(HALO_NSPIRE) && NSPIRE_BIPED_COLLISION_MEMO
+	else if (biped_collision_memo_reuse(physics->biped_index, collision_flags, &position, &velocity, physics->height,
+		physics->width, &clipped_position, &clipped_velocity, &collision_count, collisions))
+	{
+	}
+#endif
 	else
 	{
 		collision_count = collision_move_pill(
@@ -2605,6 +2728,10 @@ static void biped_update_physics(
 			&clipped_velocity,
 			16,
 			collisions);
+#if defined(HALO_NSPIRE) && NSPIRE_BIPED_COLLISION_MEMO
+		biped_collision_memo_keep(physics->biped_index, collision_flags, &position, &velocity, physics->height,
+			physics->width, &clipped_position, &clipped_velocity, collision_count, collisions);
+#endif
 	}
 
 	if (debug_biped_physics &&
@@ -4251,13 +4378,18 @@ boolean biped_update(
 		biped_verify_object_vectors(biped_index, "pre-turning");
 		if (!TEST_FLAG(biped->object.damage_flags, _object_dead_bit))
 		{
+			NSPIRE_PROFILE_BEGIN(_nspire_profile_biped_turning);
 			biped_update_turning(biped_index, &animation);
+			NSPIRE_PROFILE_END(_nspire_profile_biped_turning);
 			biped_verify_object_vectors(biped_index, "post-turning");
 		}
 
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_biped_moving);
 		biped_update_moving(biped_index, &animation);
+		NSPIRE_PROFILE_END(_nspire_profile_biped_moving);
 		biped_verify_object_vectors(biped_index, "post-moving");
 
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_biped_state);
 		if (TEST_FLAG(biped->object.damage_flags, _object_dead_bit))
 		{
 			biped_update_dead(biped_index, &animation);
@@ -4274,6 +4406,7 @@ boolean biped_update(
 		{
 			biped_update_slipping(biped_index, &animation);
 		}
+		NSPIRE_PROFILE_END(_nspire_profile_biped_state);
 
 		biped_verify_object_vectors(biped_index, "post-dead/air/land/slip");
 
@@ -4326,8 +4459,10 @@ boolean biped_update(
 		biped_check_discard(biped_index);
 	}
 
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_biped_animation);
 	if (unit_update_animation(biped_index, &animation)==1)
 		biped_jump(biped_index);
+	NSPIRE_PROFILE_END(_nspire_profile_biped_animation);
 
 	if (TEST_FLAG(biped->object.damage_flags, _object_dead_bit) &&
 		TEST_FLAG(biped->object.flags, _object_at_rest_bit))

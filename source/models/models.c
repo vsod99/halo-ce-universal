@@ -741,6 +741,13 @@ void render_model(
 	struct model *model = model_definition_get(model_index);
 
 	profile_enter(render_model_section);
+#ifdef HALO_NSPIRE
+	{
+		extern void soft_rasterizer_mark(const char *text, long value);
+
+		soft_rasterizer_mark(tag_get_name(model_index), unique_identifier);
+	}
+#endif
 
 	match_assert("c:\\halo\\SOURCE\\models\\models.c", 82, lighting);
 
@@ -782,6 +789,7 @@ void render_model(
 			centroid = &node_matrices->position;
 		}
 
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_model_node_matrices);
 		if (node_matrices)
 		{
 			for (node_index = 0; node_index<model->nodes.count; node_index++)
@@ -801,10 +809,18 @@ void render_model(
 				relative_node_matrices[node_index] = render.frustum.world_to_view;
 			}
 		}
+		NSPIRE_PROFILE_END(_nspire_profile_model_node_matrices);
 
 		geometry_detail_level_index = NUMBER_OF_DETAIL_LEVELS_PER_MODEL-1;
+#ifdef HALO_NSPIRE
+		/* the detail chosen for the size in the pixels actually drawn (the
+		world at a quarter of 640x480 across), not the size at 640x480 */
+		while (geometry_detail_level_index>0 &&
+			level_of_detail_pixels * NSPIRE_MODEL_DETAIL_SCALE<model->detail_cutoff_pixels[geometry_detail_level_index])
+#else
 		while (geometry_detail_level_index>0 &&
 			level_of_detail_pixels<model->detail_cutoff_pixels[geometry_detail_level_index])
+#endif
 		{
 			geometry_detail_level_index--;
 		}

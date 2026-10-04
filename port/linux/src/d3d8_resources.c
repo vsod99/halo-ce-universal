@@ -191,6 +191,12 @@ HRESULT WINAPI D3DDevice_CreateTexture(UINT width, UINT height, UINT levels, DWO
 {
 	(void)usage;
 	(void)pool;
+#ifdef HALO_NSPIRE
+	/* the TI-Nspire's renderer draws into small render targets (the motion
+	sensor's) and reads A4R4G4B4 texels only (port/nspire/src/soft_rasterizer.c) */
+	if ((usage & D3DUSAGE_RENDERTARGET) && format == D3DFMT_A8R8G8B8 && width <= 64 && height <= 64)
+		format = D3DFMT_A4R4G4B4;
+#endif
 	return create_texture(width, height, 1, levels, format, FALSE, (D3DBaseTexture **)texture);
 }
 

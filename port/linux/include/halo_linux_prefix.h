@@ -10,7 +10,7 @@ byte-for-byte identical to what the matching MSVC build compiles.
 #ifndef __HALO_LINUX_PREFIX_H
 #define __HALO_LINUX_PREFIX_H
 
-#if !defined(__i386__) && !defined(HALO_ANDROID)
+#if !defined(__i386__) && !defined(HALO_ANDROID) && !defined(HALO_NSPIRE)
 #error the Linux port targets 32-bit x86: game data structures assume 32-bit pointers
 #endif
 
@@ -58,6 +58,23 @@ platform layer instead. */
 #define _InterlockedExchange halo_linux_InterlockedExchange
 #define _InterlockedExchangeAdd halo_linux_InterlockedExchangeAdd
 #define _InterlockedIncrement halo_linux_InterlockedIncrement
+
+/* ---------- MSVC low-level I/O names on the TI-Nspire
+
+newlib's system call layer (Ndless libsyscalls) defines _open, _read,
+_stat and the rest itself, and its read() calls _read. The MSVC functions
+of those names (port/linux/src/msvc_crt.c) take other names there. */
+
+#ifdef HALO_NSPIRE
+#include "halo_nspire_profile.h"
+#define _open halo_msvc_open
+#define _close halo_msvc_close
+#define _read halo_msvc_read
+#define _write halo_msvc_write
+#define _lseek halo_msvc_lseek
+#define _stat halo_msvc_stat
+#define _fstat halo_msvc_fstat
+#endif
 
 /* ---------- structured exception handling
 

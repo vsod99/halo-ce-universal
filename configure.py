@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from tools import ninja_syntax
 from tools.android_build import android_configure_inputs, generate_android_build
 from tools.linux_build import generate_linux_build, linux_configure_inputs
+from tools.nspire_build import generate_nspire_build, nspire_configure_inputs
 from tools.windows_build import generate_windows_build, windows_configure_inputs
 
 # arguments
@@ -73,6 +74,16 @@ parser.add_argument(
     type=str,
     help="clang with the arm64_32 target for the Android guest (default: clang)",
 )
+parser.add_argument(
+    "--ndless-sdk",
+    metavar="PATH",
+    help="Ndless SDK for `ninja nspire` (default: NDLESS_SDK, or ../Ndless/ndless-sdk)",
+)
+parser.add_argument(
+    "--nspire-cc",
+    metavar="BINARY",
+    help="clang for the TI-Nspire build, `ninja nspire` (default: clang)",
+)
 args = parser.parse_args()
 
 # the settings the builds read
@@ -87,6 +98,8 @@ sln = SimpleNamespace(
     port_pgo_profile=args.pgo_profile,
     android_ndk=args.android_ndk,
     android_guest_cc=args.android_guest_cc,
+    ndless_sdk=args.ndless_sdk,
+    nspire_cc=args.nspire_cc,
 )
 
 
@@ -112,6 +125,7 @@ n.newline()
 generate_linux_build(n, sln)
 generate_android_build(n, sln)
 generate_windows_build(n, sln)
+generate_nspire_build(n, sln)
 
 n.comment("Reconfigure on change")
 n.rule(
@@ -129,6 +143,7 @@ n.build(
         *linux_configure_inputs(),
         *android_configure_inputs(),
         *windows_configure_inputs(),
+        *nspire_configure_inputs(),
     ],
 )
 n.newline()

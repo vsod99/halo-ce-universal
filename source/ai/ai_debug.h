@@ -25,8 +25,24 @@ enum
 	MAXIMUM_AI_DEBUG_LINEOFSIGHT_POINTS = 16384,
 	MAXIMUM_AI_DEBUG_LINEOFSIGHT_PAIRS = 8192,
 	NUMBER_OF_AI_DEBUG_ACTOR_RECORDS = 512,
+#ifdef HALO_NSPIRE
+	MAXIMUM_AI_DEBUG_PATH_STORAGE = 1,
+#else
 	MAXIMUM_AI_DEBUG_PATH_STORAGE = 32,
+#endif
 };
+
+/* The AI keeps debugging records per actor (26 KB each) and per path
+(115 KB each), 10 MB in all, which only the AI debug renderer reads. The
+TI-Nspire has no room for them: every actor shares a couple of records (the
+game only writes them), and no path is recorded (ai_debug_get_path_storage). */
+#ifdef HALO_NSPIRE
+#define ACTOR_DEBUG_RECORD_COUNT 2
+#define ACTOR_DEBUG_INDEX(actor_index) (DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index) % ACTOR_DEBUG_RECORD_COUNT)
+#else
+#define ACTOR_DEBUG_RECORD_COUNT MAXIMUM_NUMBER_OF_ACTORS
+#define ACTOR_DEBUG_INDEX(actor_index) DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)
+#endif
 
 enum
 {

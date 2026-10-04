@@ -295,7 +295,33 @@ static unsigned short msvc_to_control_word(unsigned int value, unsigned short wo
 	return word;
 }
 
-#ifdef HALO_ANDROID
+#if defined(HALO_NSPIRE)
+/* The TI-Nspire's ARM926EJ-S has no floating-point unit: libgcc's soft
+float always rounds to nearest and raises nothing. The control word is
+remembered so the game reads back what it set. */
+static unsigned int nspire_control_word = _MCW_EM | _PC_53 | _RC_NEAR;
+
+unsigned int _control87(unsigned int new_value, unsigned int mask)
+{
+	nspire_control_word = (nspire_control_word & ~mask) | (new_value & mask);
+	return nspire_control_word;
+}
+
+unsigned int _controlfp(unsigned int new_value, unsigned int mask)
+{
+	return _control87(new_value, mask & ~_EM_DENORMAL);
+}
+
+unsigned int _statusfp(void)
+{
+	return 0;
+}
+
+unsigned int _clearfp(void)
+{
+	return 0;
+}
+#elif defined(HALO_ANDROID)
 /* AArch64: the rounding mode lives in FPCR.RMode, the sticky exception
 flags in FPSR. Precision control and exception unmasking have no
 equivalent; the rest of the MSVC control word is only remembered. */

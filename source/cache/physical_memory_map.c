@@ -47,8 +47,8 @@ symbols in this file:
 #define GAME_STATE_VERIFY_SIZE HALO_PORT_GAME_STATE_CPU_SIZE
 #define TAG_CACHE_BASE_ADDRESS 0x803A6000
 #define TAG_CACHE_SIZE 0x1600000
-#define TEXTURE_CACHE_SIZE 0x1600000
-#define SOUND_CACHE_SIZE 0x400000
+#define TEXTURE_CACHE_SIZE HALO_PORT_TEXTURE_CACHE_SIZE
+#define SOUND_CACHE_SIZE HALO_PORT_SOUND_CACHE_SIZE
 
 /* ---------- macros */
 
@@ -77,7 +77,18 @@ void physical_memory_allocate(
 #line 46 "c:\\halo\\SOURCE\\cache\\physical_memory_map.c"
 	match_assert(__FILE__, __LINE__, (unsigned long)physical_memory_map_globals.game_state_base_address==GAME_STATE_BASE_ADDRESS);
 
+#ifdef HALO_NSPIRE
+	/* the TI-Nspire pages the tag cache in from compressed blocks
+	(port/nspire/src/nspire_paging.c): its addresses are reserved, not
+	backed */
+	{
+		extern void *nspire_paging_reserve(unsigned long address, unsigned long size);
+
+		physical_memory_map_globals.tag_cache_base_address = nspire_paging_reserve(TAG_CACHE_BASE_ADDRESS, TAG_CACHE_SIZE);
+	}
+#else
 	physical_memory_map_globals.tag_cache_base_address = XPhysicalAlloc(TAG_CACHE_SIZE, TAG_CACHE_BASE_ADDRESS & 0x7FFFFFFF, 0, PAGE_READWRITE);
+#endif
 #line 50 "c:\\halo\\SOURCE\\cache\\physical_memory_map.c"
 	match_assert(__FILE__, __LINE__, (unsigned long)physical_memory_map_globals.tag_cache_base_address==TAG_CACHE_BASE_ADDRESS);
 

@@ -101,8 +101,17 @@ long rasterizer_xbox_bitmap_get_pixel_data_size(
 	struct bitmap_data *bitmap)
 {
 	long offset = 0;
-	short maximum_mipmap_index = rasterizer_xbox_bitmap_get_max_mipmap_count(bitmap);
+	short maximum_mipmap_index;
 	short mipmap_index;
+
+#ifdef HALO_NSPIRE
+	/* (made smaller by tools/nspire_map.py, which keeps the size it is laid
+	out by in width and height, 0x5A in the pad's high byte: the pixels'
+	own size is the one it wrote) */
+	if (((unsigned short)bitmap->mipmap_pad >> 8) == 0x5A)
+		return bitmap->pixels_size;
+#endif
+	maximum_mipmap_index = rasterizer_xbox_bitmap_get_max_mipmap_count(bitmap);
 
 	for (mipmap_index = 0; mipmap_index <= maximum_mipmap_index; mipmap_index++)
 	{

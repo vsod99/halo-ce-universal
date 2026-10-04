@@ -455,6 +455,10 @@ static void game_state_allocation_record(
 	// retaining one out-of-line copy under its private address-derived name.
 	FILE *file = bss_004d27b0;
 
+#ifdef HALO_NSPIRE
+	/* (the TI-Nspire keeps no allocation list: a file held open all game) */
+	return;
+#endif
 	if (!file)
 	{
 		file = fopen("d:\\gamestate.txt", "w");
@@ -561,6 +565,38 @@ struct lruv_cache *game_state_lruv_cache_new(
 
 	return cache;
 }
+
+#ifdef HALO_NSPIRE
+/* the checkpoint the last run quit with (port/nspire/src/nspire_checkpoint.c),
+gone back to when it is of this map */
+int nspire_checkpoint_resume(void);
+int nspire_checkpoint_peek(unsigned long offset, void *out, unsigned long size);
+void nspire_checkpoint_dispose(void);
+void game_state_nspire_file_valid(void);
+void nspire_log(const char *format, ...);
+
+void game_state_nspire_resume(
+	void)
+{
+	struct game_state_header header;
+	unsigned long offset = (unsigned long)((byte *)game_state_globals.header - (byte *)game_state_globals.base_address);
+
+	if (!nspire_checkpoint_resume())
+		return;
+	if (!nspire_checkpoint_peek(offset, &header, sizeof(header)) || !game_state_header_valid(&header, FALSE))
+	{
+		nspire_log("checkpoint: the saved one is not of this map or build; starting afresh");
+		nspire_checkpoint_dispose();
+		return;
+	}
+	game_state_globals.saved_game_valid = TRUE;
+	game_state_nspire_file_valid();
+	game_state_revert();
+	nspire_log("checkpoint: went back to the saved one");
+
+	return;
+}
+#endif
 
 void game_state_try_and_load_from_persistent_storage(
 	void)

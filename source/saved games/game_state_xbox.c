@@ -215,9 +215,28 @@ void game_state_free_buffer(
 	return;
 }
 
+#ifdef HALO_NSPIRE
+/* The TI-Nspire keeps checkpoints in memory, their zeros left out
+(port/nspire/src/nspire_checkpoint.c): its flash takes minutes to write
+the 3.3 MB savegame.bin. */
+int nspire_checkpoint_save(const void *buffer, unsigned long size);
+int nspire_checkpoint_load(void *buffer, unsigned long size);
+
+/* a checkpoint read from the save file is there to be read (game_state.c) */
+void game_state_nspire_file_valid(
+	void)
+{
+	xbox_game_state_globals.file_valid_for_read = TRUE;
+}
+#endif
+
 void game_state_create_or_open_file(
 	void)
 {
+#ifdef HALO_NSPIRE
+	xbox_game_state_globals.file_open = TRUE;
+	return;
+#endif
 	match_assert(
 		"c:\\halo\\SOURCE\\saved games\\game_state_xbox.c",
 		86,
@@ -257,7 +276,9 @@ void game_state_close_file(
 		"c:\\halo\\SOURCE\\saved games\\game_state_xbox.c",
 		106,
 		xbox_game_state_globals.file_open);
+#ifndef HALO_NSPIRE
 	CloseHandle(xbox_game_state_globals.handle);
+#endif
 	xbox_game_state_globals.file_open = FALSE;
 
 	return;
@@ -278,11 +299,15 @@ boolean game_state_write_to_file(
 		121,
 		xbox_game_state_globals.file_open);
 
+#ifdef HALO_NSPIRE
+	if (nspire_checkpoint_save(xbox_game_state_globals.buffer, xbox_game_state_globals.buffer_size))
+#else
 	if (SetFilePointer(xbox_game_state_globals.handle, 0, NULL, FILE_BEGIN) !=
 			INVALID_SET_FILE_POINTER &&
 		WriteFile(xbox_game_state_globals.handle, xbox_game_state_globals.buffer,
 			xbox_game_state_globals.buffer_size, &bytes_written, NULL) &&
 		bytes_written == xbox_game_state_globals.buffer_size)
+#endif
 	{
 		xbox_game_state_globals.file_valid_for_read = TRUE;
 		result = TRUE;
@@ -318,11 +343,15 @@ boolean game_state_read_from_file(
 		146,
 		xbox_game_state_globals.file_valid_for_read || recover_saved_games_hack);
 
+#ifdef HALO_NSPIRE
+	if (nspire_checkpoint_load(xbox_game_state_globals.buffer, xbox_game_state_globals.buffer_size))
+#else
 	if (SetFilePointer(xbox_game_state_globals.handle, 0, NULL, FILE_BEGIN) !=
 			INVALID_SET_FILE_POINTER &&
 		ReadFile(xbox_game_state_globals.handle, xbox_game_state_globals.buffer,
 			xbox_game_state_globals.buffer_size, &bytes_read, NULL) &&
 		bytes_read == xbox_game_state_globals.buffer_size)
+#endif
 	{
 		result = TRUE;
 	}

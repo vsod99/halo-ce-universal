@@ -125,15 +125,27 @@ symbols in this file:
 
 enum
 {
-	XBOX_TEXTURE_CACHE_PAGE_COUNT = 0x580,
+#ifdef HALO_NSPIRE
+	/* the TI-Nspire's textures are at most 64x64 (11 KB with their
+	mipmaps): 4 KB pages waste less of its small cache than the Xbox's 16 KB */
+	XBOX_TEXTURE_CACHE_PAGE_SIZE_BITS = 12,
+#else
 	XBOX_TEXTURE_CACHE_PAGE_SIZE_BITS = 14,
+#endif
+#ifdef HALO_NSPIRE
+	/* the TI-Nspire's texture cache is smaller than the Xbox's 22 MB
+	(halo_port_capacity.h): as many pages as it holds */
+	XBOX_TEXTURE_CACHE_PAGE_COUNT = HALO_PORT_TEXTURE_CACHE_SIZE >> XBOX_TEXTURE_CACHE_PAGE_SIZE_BITS,
+#else
+	XBOX_TEXTURE_CACHE_PAGE_COUNT = 0x580,
+#endif
 	XBOX_TEXTURE_CACHE_PAGE_SIZE = 1 << XBOX_TEXTURE_CACHE_PAGE_SIZE_BITS,
 	XBOX_TEXTURE_CACHE_STEAL_GUARD_SIZE = 0x104000,
 	XBOX_TEXTURE_CACHE_STEALABLE_PAGE_COUNT =
 		XBOX_TEXTURE_CACHE_PAGE_COUNT -
 		2 * (XBOX_TEXTURE_CACHE_STEAL_GUARD_SIZE / XBOX_TEXTURE_CACHE_PAGE_SIZE),
 	XBOX_TEXTURE_CACHE_ENTRY_SIZE = 0x20,
-	XBOX_TEXTURE_CACHE_SIZE = 0x1600000,
+	XBOX_TEXTURE_CACHE_SIZE = HALO_PORT_TEXTURE_CACHE_SIZE,
 	XBOX_TEXTURE_CACHE_PROTECTION = 0x404,
 };
 
@@ -621,10 +633,24 @@ static void texture_cache_initialize_hardware_format(
 	}
 	else
 	{
+		long stored_width = bitmap->width, stored_height = bitmap->height;
+
+#ifdef HALO_NSPIRE
+		/* (tools/nspire_map.py made the pixels smaller but kept the size the
+		interface lays the bitmap out by: the halvings, 0x5A in the high
+		byte, are in the pad after the mipmap count) */
+		if (((unsigned short)bitmap->mipmap_pad >> 8) == 0x5A)
+		{
+			stored_width >>= bitmap->mipmap_pad & 15;
+			stored_height >>= (bitmap->mipmap_pad >> 4) & 15;
+			if (stored_width < 1) stored_width = 1;
+			if (stored_height < 1) stored_height = 1;
+		}
+#endif
 		texture->Format =
 			(floor_log2(bitmap->depth) << D3DFORMAT_PSIZE_SHIFT) |
-			(floor_log2(bitmap->height) << D3DFORMAT_VSIZE_SHIFT) |
-			(floor_log2(bitmap->width) << D3DFORMAT_USIZE_SHIFT) |
+			(floor_log2(stored_height) << D3DFORMAT_VSIZE_SHIFT) |
+			(floor_log2(stored_width) << D3DFORMAT_USIZE_SHIFT) |
 			(bitmap_format_to_d3d_format(bitmap->format, bitmap->flags) << D3DFORMAT_FORMAT_SHIFT) |
 			((bitmap->type == _bitmap_type_3d ? 3 : 2) << D3DFORMAT_DIMENSION_SHIFT) |
 			((rasterizer_xbox_bitmap_get_max_mipmap_count(bitmap) + 1) << D3DFORMAT_MIPMAP_SHIFT) |

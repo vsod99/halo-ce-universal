@@ -265,7 +265,7 @@ void ai_debug_initialize(
 	ai_debug.last_render_id = 1;
 	ai_debug.render = TRUE;
 
-	actor_debug_array = actor_debug_array==NULL ? (struct actor_debug_info *)debug_malloc(sizeof(*actor_debug_array) * MAXIMUM_NUMBER_OF_ACTORS, FALSE, "c:\\halo\\SOURCE\\ai\\ai_debug.c", 147) : actor_debug_array;
+	actor_debug_array = actor_debug_array==NULL ? (struct actor_debug_info *)debug_malloc(sizeof(*actor_debug_array) * ACTOR_DEBUG_RECORD_COUNT, FALSE, "c:\\halo\\SOURCE\\ai\\ai_debug.c", 147) : actor_debug_array;
 	actor_path_debug_array = actor_path_debug_array==NULL ? (struct path_debug_storage *)debug_malloc(sizeof(*actor_path_debug_array) * MAXIMUM_NUMBER_OF_ACTOR_PATHS, FALSE, "c:\\halo\\SOURCE\\ai\\ai_debug.c", 148) : actor_path_debug_array;
 
 	match_assert("c:\\halo\\SOURCE\\ai\\ai_debug.c", 150, actor_debug_array && actor_path_debug_array);
@@ -319,7 +319,7 @@ void ai_debug_clear_storage(
 {
 	match_assert("c:\\halo\\SOURCE\\ai\\ai_debug.c", 208, actor_debug_array);
 
-	memset(actor_debug_array, 0, sizeof(*actor_debug_array) * MAXIMUM_NUMBER_OF_ACTORS);
+	memset(actor_debug_array, 0, sizeof(*actor_debug_array) * ACTOR_DEBUG_RECORD_COUNT);
 	match_assert("c:\\halo\\SOURCE\\ai\\ai_debug.c", 211, actor_path_debug_array)
 
 	memset(actor_path_debug_array, 0, sizeof(*actor_path_debug_array) * MAXIMUM_NUMBER_OF_ACTOR_PATHS);
@@ -739,7 +739,7 @@ static void ai_debug_render_actor(
 	long *history_start_time)
 {
 	struct actor_datum* actor = actor_get(actor_index);
-	struct actor_debug_info *actor_debug_info = &actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+	struct actor_debug_info *actor_debug_info = &actor_debug_array[ACTOR_DEBUG_INDEX(actor_index)];
 
 	if (actor_debug_info->last_render_id!=ai_debug.last_render_id)
 	{
@@ -4937,6 +4937,11 @@ struct path_debug_storage *ai_debug_get_path_storage(
 {
 	short storage_index = NONE;
 	short index;
+
+#ifdef HALO_NSPIRE
+	/* no path is recorded (ai_debug.h); path.c takes NULL for none */
+	return NULL;
+#endif
 
 	for (index = 0; index<MAXIMUM_AI_DEBUG_PATH_STORAGE; index++)
 	{

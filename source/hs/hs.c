@@ -13963,6 +13963,19 @@ boolean hs_scenario_postprocess(
 	recompile = scenario->hs_scripts.count == 0 && scenario->hs_source_files.count>0;
 	hs_syntax_data = (struct data_array *)scenario->hs_syntax_data.address;
 	hs_syntax_data->data = (char *)hs_syntax_data+sizeof(struct data_array);
+#ifdef HALO_NSPIRE
+	/* (the array made at start-up, before there was a scenario, gives way
+	to the scenario's own, which lives in its tag data: still marked as
+	allocated, the next map's change of maps disposed of the scenario's,
+	which only the main menu's map leading to a level ever did) */
+	if (hs_syntax_data_allocated && !restore_syntax_data && saved_syntax_data &&
+		saved_syntax_data != hs_syntax_data)
+	{
+		data_make_invalid(saved_syntax_data);
+		data_dispose(saved_syntax_data);
+		hs_syntax_data_allocated = FALSE;
+	}
+#endif
 	if (!recompile && hs_compile_postprocess(&error_message, &error_source))
 	{
 		if (scenario->hs_string_constants.size<0x400)

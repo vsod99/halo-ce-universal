@@ -62,6 +62,8 @@ symbols in this file:
 
 /* ---------- headers */
 
+/* (data.h's inline datum_get is for the callers) */
+#define DATA_C
 #include "cseries.h"
 #include "data.h"
 
@@ -349,6 +351,15 @@ void data_delete_all(
 	short absolute_index;
 
 	data_verify(data);
+#ifdef HALO_NSPIRE
+	if (!data->valid)
+	{
+		extern void nspire_log(const char *format, ...);
+
+		nspire_log("data_delete_all of an invalid array at %p, named '%.31s', from %p", data, data->name,
+			__builtin_return_address(0));
+	}
+#endif
 	match_assert("c:\\halo\\SOURCE\\memory\\data.c", 226, data->valid);
 
 	data->count = 0;

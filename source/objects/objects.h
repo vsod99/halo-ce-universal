@@ -373,6 +373,22 @@ long cluster_get_next_collideable_object(long *reference_index);
 short object_get_next_cluster(struct object_cluster_iterator *iterator, long object_index);
 void *object_try_and_get_and_verify_type(long object_index, unsigned long valid_type_flags);
 void *object_get_and_verify_type(long object_index, unsigned long valid_type_flags);
+
+#if defined(HALO_NSPIRE) && !defined(OBJECTS_C)
+/* (the Nspire port: called all over, through object_get and the types'
+gets; a sound request answered inline, anything else as before) */
+extern struct data_array *object_header_data;
+
+static __inline__ void *object_get_and_verify_type_inline(long object_index, unsigned long valid_type_flags)
+{
+	struct object_datum *result = object_header_get(object_index)->datum;
+
+	if (TEST_FLAG(valid_type_flags, result->object.type))
+		return result;
+	return object_get_and_verify_type(object_index, valid_type_flags);
+}
+#define object_get_and_verify_type object_get_and_verify_type_inline
+#endif
 void object_iterator_new(struct object_iterator *iterator, unsigned long type_flags, byte flags);
 void *object_iterator_next(struct object_iterator *iterator);
 long object_get_ultimate_parent(long object_index);

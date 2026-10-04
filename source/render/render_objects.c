@@ -278,6 +278,33 @@ static boolean reported_rendered_object_overflow = FALSE;
 
 /* ---------- public code */
 
+#ifdef HALO_NSPIRE
+/* the frame each object's model was last drawn in (by absolute index) */
+static unsigned long nspire_object_drawn_frames[MAXIMUM_OBJECTS_PER_MAP];
+static unsigned long nspire_render_frame = 2;
+/* and how wide it was then, in the game's 640-wide pixels */
+static unsigned short nspire_object_pixels[MAXIMUM_OBJECTS_PER_MAP];
+
+int nspire_object_seen(
+	long object_index)
+{
+	long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(object_index);
+
+	return absolute_index < MAXIMUM_OBJECTS_PER_MAP &&
+		nspire_object_drawn_frames[absolute_index] + 2 >= nspire_render_frame;
+}
+
+/* whether an object drawn lately was small on the screen (its animation
+then every other tick, as for one not drawn: objects.c) */
+int nspire_object_small(
+	long object_index)
+{
+	long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(object_index);
+
+	return nspire_object_seen(object_index) && nspire_object_pixels[absolute_index] < NSPIRE_SMALL_OBJECT_PIXELS;
+}
+#endif
+
 void render_objects_initialize(
 	void)
 {
@@ -345,8 +372,13 @@ void render_objects(
 
 	profile_enter(render_objects_section);
 
+#ifdef HALO_NSPIRE
+	nspire_render_frame++;
+#endif
 	rasterizer_models_begin(FALSE);
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_object_render_find);
 	find_rendered_objects();
+	NSPIRE_PROFILE_END(_nspire_profile_object_render_find);
 
 	data.shadow = FALSE;
 
@@ -354,7 +386,22 @@ void render_objects(
 	{
 		if (first_person_pass != rasterizer_debug_options.draw_first_person_weapon_first)
 		{
-			first_person_weapon_draw();
+			NSPIRE_PROFILE_BEGIN(_nspire_profile_object_render_first_person);
+			{
+				extern void soft_rasterizer_mark(const char *text, long value);
+
+				soft_rasterizer_mark("first person weapon", 0);
+			}
+			{
+				extern int soft_rasterizer_first_person(int drawing);
+
+				/* (drawn every other frame: the rasterizer pastes the last
+				drawing's pixels between) */
+				if (soft_rasterizer_first_person(TRUE))
+					first_person_weapon_draw();
+				soft_rasterizer_first_person(FALSE);
+			}
+			NSPIRE_PROFILE_END(_nspire_profile_object_render_first_person);
 		}
 		else
 		{
@@ -435,6 +482,57 @@ static void find_rendered_objects(
 
 	object_marker_end();
 
+#ifdef HALO_NSPIRE
+	/* The TI-Nspire's software renderer spends as long on an object a few
+	pixels across as on one filling the screen: leave out what would cover
+	less than NSPIRE_MINIMUM_OBJECT_PIXELS of the game's 640-pixel width, or
+	NSPIRE_MINIMUM_SCENERY_PIXELS for scenery (trees and rocks, which cost
+	the most and matter the least), but for scenery as large as a landmark
+	(NSPIRE_LANDMARK_RADIUS: the island's rock formations, seen from the
+	sea, else left a hole in it). */
+	{
+		short read_index, write_index = 0;
+
+		for (read_index = 0; read_index<render_object_globals.rendered_object_count; read_index++)
+		{
+			long object_index = render_object_globals.rendered_object_indices[read_index];
+
+			struct object_datum *object = object_get(object_index);
+			real minimum_pixels = object->object.type==_object_type_scenery &&
+				object->object.bounding_sphere_radius<NSPIRE_LANDMARK_RADIUS ?
+				NSPIRE_MINIMUM_SCENERY_PIXELS : NSPIRE_MINIMUM_OBJECT_PIXELS;
+
+			real pixels = object_get_level_of_detail_pixels(object_index);
+
+			if (pixels>=minimum_pixels)
+			{
+				render_object_globals.rendered_object_indices[write_index++] = object_index;
+				if (DATUM_INDEX_TO_ABSOLUTE_INDEX(object_index) < MAXIMUM_OBJECTS_PER_MAP)
+				{
+					nspire_object_pixels[DATUM_INDEX_TO_ABSOLUTE_INDEX(object_index)] =
+						(unsigned short)(pixels < 65535.f ? pixels : 65535.f);
+				}
+			}
+			else if (object->object.type==_object_type_scenery && object->object.bounding_sphere_radius>=2.f)
+			{
+				/* (what large scenery is left out, for a while: the log tells
+				whether a hole someone sees is one) */
+				extern void nspire_log(const char *format, ...);
+				static short logged;
+
+				if (logged<64)
+				{
+					logged++;
+					nspire_log("scenery left out: radius %ld/100, %ld pixels wide, at %ld %ld %ld",
+						(long)(object->object.bounding_sphere_radius*100.f), (long)pixels,
+						(long)object->object.position.x, (long)object->object.position.y, (long)object->object.position.z);
+				}
+			}
+		}
+		render_object_globals.rendered_object_count = write_index;
+	}
+#endif
+
 	if (render_object_globals.rendered_object_count == MAXIMUM_RENDERED_OBJECTS &&
 		!reported_rendered_object_overflow)
 	{
@@ -470,6 +568,30 @@ static void render_object_list(
 	while (object_index != NONE)
 	{
 		struct object_datum *object = object_get(object_index);
+
+#ifdef HALO_NSPIRE
+		/* (seen: in the frame's list, drawn or the camera's own unit) */
+		if (!data->shadow && DATUM_INDEX_TO_ABSOLUTE_INDEX(object_index) < MAXIMUM_OBJECTS_PER_MAP)
+			nspire_object_drawn_frames[DATUM_INDEX_TO_ABSOLUTE_INDEX(object_index)] = nspire_render_frame;
+#endif
+
+#ifdef HALO_NSPIRE
+		/* an object another carries (marines in a pelican, a unit's weapon):
+		tested too, behind what is drawn already (its parent's hull) */
+		if (!data->shadow && object_index != data->object_index && !object_is_first_person_camera(object_index))
+		{
+			extern int soft_rasterizer_sphere_hidden(const float center[3], float radius);
+			extern void soft_rasterizer_mark(const char *text, long value);
+
+			if (soft_rasterizer_sphere_hidden(object->object.bounding_sphere_center.n,
+				object->object.bounding_sphere_radius * 1.1f))
+			{
+				soft_rasterizer_mark("hidden by the depth test:", object_index);
+				object_index = object->object.next_object_index;
+				continue;
+			}
+		}
+#endif
 
 		if (!object_is_first_person_camera(object_index) || render.camera.mirrored)
 		{
@@ -1111,9 +1233,11 @@ static void render_object(
 			real level_of_detail_pixels;
 			real shadow_darkness;
 
+			NSPIRE_PROFILE_BEGIN(_nspire_profile_object_render_lighting);
 			data->lighting = object_get_cached_render_lighting(
 				data->object_index,
 				object_get_level_of_detail_pixels(data->object_index));
+			NSPIRE_PROFILE_END(_nspire_profile_object_render_lighting);
 
 			level_of_detail_pixels = object_get_level_of_detail_pixels(data->object_index);
 			shadow_darkness = 1.f - real_rgb_color_brightness(&data->lighting->shadow_color);
@@ -1131,7 +1255,9 @@ static void render_object(
 
 				if (render_object_shadow_begin(data, darkness_fraction * size_fraction))
 				{
+					NSPIRE_PROFILE_BEGIN(_nspire_profile_object_render_models);
 					render_object_list(data, NULL, data->object_index);
+					NSPIRE_PROFILE_END(_nspire_profile_object_render_models);
 					render_object_shadow_end(data);
 				}
 			}
@@ -1153,6 +1279,24 @@ static void render_object(
 			needs_lighting = FALSE;
 		}
 
+#ifdef HALO_NSPIRE
+		/* what the level already hides costs nothing more (its children with
+		it: the sphere is grown to take in what an object holds) */
+		{
+			extern int soft_rasterizer_sphere_hidden(const float center[3], float radius);
+
+			extern void soft_rasterizer_mark(const char *text, long value);
+
+			soft_rasterizer_mark(tag_get_name(object->definition_index), data->object_index);
+			if (!object_is_first_person_camera(data->object_index) &&
+				soft_rasterizer_sphere_hidden(object->object.bounding_sphere_center.n,
+					object->object.bounding_sphere_radius * 1.1f))
+			{
+				soft_rasterizer_mark("hidden by the depth test:", data->object_index);
+				return;
+			}
+		}
+#endif
 		if (needs_lighting || object->object.first_widget_index != NONE)
 		{
 			struct object_definition *definition =
@@ -1160,9 +1304,11 @@ static void render_object(
 
 			if (needs_lighting)
 			{
+				NSPIRE_PROFILE_BEGIN(_nspire_profile_object_render_lighting);
 				data->lighting = object_get_cached_render_lighting(
 					data->object_index,
 					object_get_level_of_detail_pixels(data->object_index));
+				NSPIRE_PROFILE_END(_nspire_profile_object_render_lighting);
 			}
 			else
 			{
@@ -1185,7 +1331,9 @@ static void render_object(
 						&object->object.bounding_sphere_center) >
 						definition->object.bounding_radius;
 
+				NSPIRE_PROFILE_BEGIN(_nspire_profile_object_render_models);
 				render_object_list(data, &model_effect, data->object_index);
+				NSPIRE_PROFILE_END(_nspire_profile_object_render_models);
 			}
 		}
 	}

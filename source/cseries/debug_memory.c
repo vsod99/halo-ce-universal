@@ -202,6 +202,26 @@ static struct debug_memory_globals debug_memory_globals =
 	debug_memory_signature
 };
 
+/* port: the signature follows a block of any size, so it is often at an
+unaligned address, which ARM (the TI-Nspire) faults on; copied bytewise */
+static unsigned long trailing_signature_get(
+	struct debug_memory_header const *header)
+{
+	unsigned long signature;
+
+	csmemcpy(&signature, (byte const *)(header + 1) + header->size, sizeof(signature));
+	return signature;
+}
+
+static void trailing_signature_set(
+	struct debug_memory_header *header,
+	unsigned long size)
+{
+	unsigned long signature = debug_memory_trailing_signature;
+
+	csmemcpy((byte *)(header + 1) + size, &signature, sizeof(signature));
+}
+
 /* ---------- public code */
 
 void debug_memory_manager_initialize(
@@ -432,7 +452,7 @@ void debug_check_memory(
 		match_vassert(
 			"c:\\halo\\SOURCE\\cseries\\debug_memory.c",
 			199,
-			*(unsigned long *)((byte *)(header + 1) + header->size) ==
+			trailing_signature_get(header) ==
 				debug_memory_trailing_signature,
 			csprintf(
 				temporary,
@@ -465,6 +485,15 @@ void *debug_malloc(
 		size>=0 && size<MAXIMUM_POINTER_SIZE);
 	debug_check_memory_globals(file, line);
 
+#ifdef HALO_NSPIRE
+	/* the calculator's memory is short: where the big blocks go */
+	if (size >= 0x10000)
+	{
+		extern void nspire_log(const char *format, ...);
+
+		nspire_log("allocation of %u KB at %s:%ld", size / 1024, file, line);
+	}
+#endif
 	header = system_malloc(allocation_size);
 	if (header != NULL)
 	{
@@ -473,8 +502,7 @@ void *debug_malloc(
 		header->line = line;
 		header->allocation_id = debug_memory_globals.next_allocation_id++;
 		header->size = size;
-		*(unsigned long *)((byte *)(header + 1) + size) =
-			debug_memory_trailing_signature;
+		trailing_signature_set(header, size);
 		debug_memory_add_pointer(header);
 
 		pointer = header + 1;
@@ -508,6 +536,20 @@ void debug_free(
 	struct debug_memory_header *header =
 		(struct debug_memory_header *)pointer - 1;
 
+#ifdef HALO_NSPIRE
+	/* (the TI-Nspire: memory in the Xbox's fixed window, the game state's
+	and the tag cache's, was never allocated here, and is not freed; going
+	from the main menu's map to a level frees a data array kept there) */
+	if ((unsigned long)pointer >= 0x80000000UL && (unsigned long)pointer < 0x90000000UL)
+	{
+		extern void nspire_log(const char *format, ...);
+		static short logged;
+
+		if (logged++ < 8)
+			nspire_log("free of %p in the memory window left alone (%s:%ld)", pointer, file, line);
+		return;
+	}
+#endif
 	debug_check_memory_globals(file, line);
 	debug_check_pointer_header(header, file, line);
 	debug_check_pointer_overrun(pointer, file, line);
@@ -567,8 +609,7 @@ void *debug_realloc(
 		header->file = file;
 		header->allocation_id = debug_memory_globals.next_allocation_id++;
 		header->size = size;
-		*(unsigned long *)((byte *)(header + 1) + size) =
-			debug_memory_trailing_signature;
+		trailing_signature_set(header, size);
 		debug_memory_add_pointer(header);
 
 		result = header + 1;
@@ -695,7 +736,7 @@ static void debug_check_pointer_overrun(
 	match_vassert(
 		"c:\\halo\\SOURCE\\cseries\\debug_memory.c",
 		199,
-		*(unsigned long *)((byte *)(header + 1) + header->size) ==
+		trailing_signature_get(header) ==
 			debug_memory_trailing_signature,
 		csprintf(
 			temporary,

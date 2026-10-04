@@ -752,6 +752,12 @@ static int symbol_sort_proc(
 static boolean is_valid_ebp(
 	void)
 {
+#ifdef HALO_NSPIRE
+	/* (the Nspire build leaves most frame pointers out: a frame pointer
+	register holding something else must not lead the walk off the stack) */
+	if (walk_up_current_frame - (unsigned long)old_ebp > 0x10000UL)
+		return FALSE;
+#endif
 	return 0==(walk_up_current_frame & (sizeof(unsigned long) - 1)) && walk_up_current_frame >= (unsigned long)old_ebp;
 }
 

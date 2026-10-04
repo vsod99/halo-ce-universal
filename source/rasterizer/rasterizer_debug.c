@@ -74,7 +74,12 @@ symbols in this file:
 
 enum
 {
+#ifdef HALO_NSPIRE
+	/* (debug lines and triangles; 480 KB each list at 8192) */
+	MAXIMUM_DEBUG_PRIMITIVES = 256,
+#else
 	MAXIMUM_DEBUG_PRIMITIVES = 8192,
+#endif
 	MAXIMUM_VERTICES_PER_DEBUG_PRIMITIVE = 3
 };
 

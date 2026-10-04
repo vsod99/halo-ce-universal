@@ -369,7 +369,13 @@ void sound_cache_new(
 		"xbox_sound_cache_globals.cache_sounds");
 	xbox_sound_cache_globals.cache = lruv_new(
 		"xbox sound cache",
+#ifdef HALO_NSPIRE
+		/* as many 4 KB pages as the TI-Nspire's smaller cache holds
+		(halo_port_capacity.h) */
+		HALO_PORT_SOUND_CACHE_SIZE >> 12,
+#else
 		1024,
+#endif
 		12,
 		512,
 		sound_cache_delete_block_proc,

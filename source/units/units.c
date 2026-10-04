@@ -5560,6 +5560,7 @@ boolean unit_update(
 		}
 
 		unit_verify_vectors(unit_index, "unit-update-prevectors");
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_unit_aiming);
 
 		if (unit->unit.aiming_speed==_unit_aiming_speed_casual)
 		{
@@ -5670,6 +5671,7 @@ boolean unit_update(
 
 		match_assert_valid_real_normal3d("c:\\halo\\SOURCE\\units\\units.c", 1076, &unit->unit.looking_vector);
 
+		NSPIRE_PROFILE_END(_nspire_profile_unit_aiming);
 		unit_verify_vectors(unit_index, "unit-update-postvector");
 
 		if (!jetpack_cheat_active)
@@ -5760,7 +5762,9 @@ boolean unit_update(
 				SET_FLAG(flags, _weapon_control_user_switching_weapons_bit, TRUE);
 			}
 
+			NSPIRE_PROFILE_BEGIN(_nspire_profile_unit_weapon);
 			weapon_owner_update(unit_get_current_weapon_index(unit_index), flags, primary_trigger);
+			NSPIRE_PROFILE_END(_nspire_profile_unit_weapon);
 		}
 	}
 
@@ -5847,11 +5851,15 @@ boolean unit_update(
 	}
 
 	unit_cause_continuous_melee_damage(unit_index);
+	NSPIRE_PROFILE_BEGIN(_nspire_profile_unit_dialogue);
 	unit_dialogue_update(unit_index);
+	NSPIRE_PROFILE_END(_nspire_profile_unit_dialogue);
 
 	if (used_time || unit->unit.player_index!=NONE)
 	{
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_unit_illumination);
 		unit_refresh_illumination(unit_index);
+		NSPIRE_PROFILE_END(_nspire_profile_unit_illumination);
 
 		if (debug_unit_illumination)
 		{
@@ -11361,12 +11369,39 @@ static void unit_cause_continuous_melee_damage(
 	return;
 }
 
+#ifdef HALO_NSPIRE
+/* a unit vector made sound again: from the first of two others that is,
+else normalized, else left as it was */
+static void unit_repair_normal(
+	real_vector3d *vector,
+	real_vector3d const *first_choice,
+	real_vector3d const *second_choice)
+{
+	if (valid_real_normal3d(vector))
+		return;
+	if (valid_real_normal3d(first_choice))
+		*vector = *first_choice;
+	else if (valid_real_normal3d(second_choice))
+		*vector = *second_choice;
+	else
+		normalize3d(vector);
+}
+#endif
+
 static void unit_verify_vectors(
 	long unit_index,
 	char const *debugstring)
 {
 	char buffer[512];
 
+#ifdef HALO_NSPIRE
+	/* (the Nspire port: checked where the AI hands its vectors over and at
+	the end of a unit's tick, not between each step: a debugging aid the
+	retail game compiled out, in soft floating point a dozen times a unit a
+	tick) */
+	if (strcmp(debugstring, "unit-control") && strcmp(debugstring, "unit-update-end"))
+		return;
+#endif
 	if (!unit_vectors_are_valid(unit_index))
 	{
 		struct unit_datum *unit = unit_get(unit_index);
@@ -11475,6 +11510,21 @@ static void unit_verify_vectors(
 			*(long *)&unit->unit.looking_velocity.k
 		);
 
+#ifdef HALO_NSPIRE
+		/* (the Nspire port: the retail game compiled this check out and played
+		on; here the vectors are mended from their nearest sound ones, and
+		only what cannot be mended stops the game) */
+		unit_repair_normal(&unit->unit.desired_looking_vector, &unit->unit.desired_aiming_vector, &unit->object.forward);
+		unit_repair_normal(&unit->unit.desired_aiming_vector, &unit->unit.desired_looking_vector, &unit->object.forward);
+		unit_repair_normal(&unit->unit.desired_facing_vector, &unit->object.forward, &unit->object.forward);
+		unit_repair_normal(&unit->unit.aiming_vector, &unit->unit.desired_aiming_vector, &unit->object.forward);
+		unit_repair_normal(&unit->unit.looking_vector, &unit->unit.desired_looking_vector, &unit->object.forward);
+		if (unit_vectors_are_valid(unit_index))
+		{
+			error(_error_silent, "  (mended, and the game goes on)");
+			return;
+		}
+#endif
 		match_vassert(
 			"c:\\halo\\SOURCE\\units\\units.c",
 			594,

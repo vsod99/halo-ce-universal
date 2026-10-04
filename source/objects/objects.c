@@ -4,6 +4,8 @@ OBJECTS.C
 
 /* ---------- headers */
 
+/* (objects.h's inline object lookup is for the callers) */
+#define OBJECTS_C
 #include "cseries.h"
 #include "objects.h"
 
@@ -3628,31 +3630,89 @@ static boolean object_update(
 			}
 		}
 
+#ifdef HALO_NSPIRE
+		{
+			long type_section = object->object.type == _object_type_biped ? _nspire_profile_update_bipeds :
+				object->object.type == _object_type_vehicle ? _nspire_profile_update_vehicles :
+				object->object.type == _object_type_weapon ? _nspire_profile_update_weapons :
+				_nspire_profile_update_other_types;
+
+			NSPIRE_PROFILE_BEGIN(_nspire_profile_object_type);
+			NSPIRE_PROFILE_BEGIN(type_section);
+			object_type_update(object_index);
+			NSPIRE_PROFILE_END(type_section);
+			NSPIRE_PROFILE_END(_nspire_profile_object_type);
+		}
+#else
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_object_type);
 		object_type_update(object_index);
+		NSPIRE_PROFILE_END(_nspire_profile_object_type);
+#endif
 		if (object_definition->object.collision_model.index!=NONE)
 		{
+			NSPIRE_PROFILE_BEGIN(_nspire_profile_object_damage);
 			object_damage_update(object_index);
+			NSPIRE_PROFILE_END(_nspire_profile_object_damage);
 		}
 
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_object_functions);
 		object_type_export_function_values(object_index);
+		NSPIRE_PROFILE_END(_nspire_profile_object_functions);
 
 		if (!TEST_FLAG(object->object.flags, _object_do_not_recompute_node_matrices_bit))
 		{
+#ifdef HALO_NSPIRE
+			BOOL seen = nspire_object_seen(object_index);
+
+			/* objects not drawn lately, or drawn small, but for vehicles
+			(their physics holds to their nodes): every other tick (a tick
+			stale for what only aims at and collides with them) */
+			if ((!seen || nspire_object_small(object_index)) && object->object.type != _object_type_vehicle &&
+				((game_time_get() + DATUM_INDEX_TO_ABSOLUTE_INDEX(object_index)) & 1))
+			{
+			}
+			else
+			{
+				long unseen_section = object->object.type == _object_type_biped ||
+					object->object.type == _object_type_weapon ? _nspire_profile_node_matrices_unseen :
+					_nspire_profile_node_matrices_unseen_other;
+
+				if (!seen)
+					NSPIRE_PROFILE_BEGIN(unseen_section);
+			NSPIRE_PROFILE_BEGIN(_nspire_profile_object_node_matrices);
+				object_compute_node_matrices(object_index);
+				NSPIRE_PROFILE_END(_nspire_profile_object_node_matrices);
+				if (!seen)
+					NSPIRE_PROFILE_END(unseen_section);
+			}
+#else
+			NSPIRE_PROFILE_BEGIN(_nspire_profile_object_node_matrices);
 			object_compute_node_matrices(object_index);
+			NSPIRE_PROFILE_END(_nspire_profile_object_node_matrices);
+#endif
 		}
 
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_object_functions);
 		object_compute_function_values(object_index);
 		object_compute_change_colors(object_index);
+		NSPIRE_PROFILE_END(_nspire_profile_object_functions);
 
 		if (
 			TEST_FLAG(object->object.flags, _object_dynamic_lighting_recompute_bit) &&
+#ifdef HALO_NSPIRE
+			/* (lights reconnected every other tick, objects taking turns:
+			the light on something changes slowly) */
+			!((game_time_get() + DATUM_INDEX_TO_ABSOLUTE_INDEX(object_index)) & 1) &&
+#endif
 			(
 				!TEST_FLAG(object->object.flags, _object_invisible_bit) ||
 				object_definition_get(object->definition_index)->object.model.index==NONE
 			)
 		)
 		{
+			NSPIRE_PROFILE_BEGIN(_nspire_profile_object_lights);
 			object_connect_lights(object_index, TRUE, TRUE);
+			NSPIRE_PROFILE_END(_nspire_profile_object_lights);
 		}
 
 		// Update children (if we have any)
@@ -3669,7 +3729,9 @@ static boolean object_update(
 			}
 		}
 
+		NSPIRE_PROFILE_BEGIN(_nspire_profile_object_postprocess);
 		object_postprocess_node_matrices(object_index);
+		NSPIRE_PROFILE_END(_nspire_profile_object_postprocess);
 	}
 
 	return result;

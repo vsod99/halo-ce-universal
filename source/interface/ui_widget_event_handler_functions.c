@@ -2144,6 +2144,17 @@ static boolean switch_from_main_menu_to_single_player(
 	struct event_record *event,
 	boolean *widget_deleted)
 {
+#ifdef HALO_NSPIRE
+	/* (the TI-Nspire's campaign is its one level: the program's name says
+	which, port/nspire/src/nspire_main.c) */
+	{
+		extern const char *nspire_level_name(void);
+		char map_name[64];
+
+		csprintf(map_name, "levels\\%s\\%s", nspire_level_name(), nspire_level_name());
+		main_set_map_name(map_name);
+	}
+#endif
 	game_connection_set(0);
 	main_menu_switch_to_single_player();
 	player_ui_remember_player1_profile(0);
