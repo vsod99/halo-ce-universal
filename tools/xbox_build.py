@@ -237,6 +237,9 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
         f"-I{_quote(nxdk_lib / 'pdclib' / 'platform' / 'xbox' / 'include')}",
         f"-I{_quote(nxdk_lib / 'winapi')}", f"-I{_quote(nxdk_lib / 'xboxrt' / 'vcruntime')}",
         "-U__STDC_NO_THREADS__",
+        # nxdk's USB host stack (nxdk_gamepads.c; nxdk/lib/usb/Makefile)
+        f"-I{_quote(nxdk_lib / 'usb' / 'libusbohci' / 'inc')}", f"-I{_quote(nxdk_lib / 'usb' / 'libusbohci_xbox')}",
+        "'-DUSBH_USE_EXTERNAL_CONFIG=\"usbh_config_xbox.h\"'",
     ])
     for source in config.get("platform_sources", []):
         add_object(Path(source), platform_cflags)
