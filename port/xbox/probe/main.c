@@ -27,7 +27,6 @@ Run it with python tools/xbox_dev.py run port/xbox/probe.
 
 #define PAGE_BYTES 0x1000UL
 #define SCAN_STEP 0x10000UL
-#define MEGABYTE (1024.0 * 1024.0)
 
 struct region
 {
@@ -58,11 +57,14 @@ static void log_statistics(const char *when)
 		xbox_log("%s: MmQueryStatistics failed", when);
 		return;
 	}
-	xbox_log("%s: %lu pages (%.1f MB) in all, %lu (%.1f MB) available; image %lu pages, pool %lu, stacks %lu",
+	/* in KB: nxdk's printf formats no floating point */
+	xbox_log("%s: %lu KB in all, %lu KB available; image %lu KB, pool %lu KB, stacks %lu KB",
 		when,
-		statistics.TotalPhysicalPages, statistics.TotalPhysicalPages * PAGE_BYTES / MEGABYTE,
-		statistics.AvailablePages, statistics.AvailablePages * PAGE_BYTES / MEGABYTE,
-		statistics.ImagePagesCommitted, statistics.PoolPagesCommitted, statistics.StackPagesCommitted);
+		statistics.TotalPhysicalPages * (PAGE_BYTES / 1024),
+		statistics.AvailablePages * (PAGE_BYTES / 1024),
+		statistics.ImagePagesCommitted * (PAGE_BYTES / 1024),
+		statistics.PoolPagesCommitted * (PAGE_BYTES / 1024),
+		statistics.StackPagesCommitted * (PAGE_BYTES / 1024));
 }
 
 static void log_physical(const char *name, void *address)
