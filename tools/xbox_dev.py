@@ -11,7 +11,7 @@ template is port/xbox/xemu.example.toml): nxdk, xemu, and the console files
 xemu boots with (MCPX boot ROM, flash BIOS, EEPROM, hard disk image), which
 must be dumped from your own console and are never committed.
 
-A program reports through COM1 (port/xbox/common/xbox_log.c). xemu emulates
+A program reports through COM2 (port/xbox/common/xbox_log.c). xemu emulates
 the debug kits' SuperIO serial port (-device lpc47m157), and the runner reads
 it from a socket. The program ends its run with XBOX_LOG_DONE_MARKER; a
 program that hangs is stopped at the timeout, its screen saved either way
@@ -190,8 +190,13 @@ def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool) 
     listener.bind(("127.0.0.1", serial_port))
     listener.listen(1)
 
+    # COM1 is the kernel debugger's when the kernel sees the SuperIO chip
+    # (Cerbios's hybrid kernel): its packets go to a file; the program's
+    # log is on COM2 (port/xbox/common/xbox_log.c)
     command = [str(xemu), "-config_path", str(xemu_config),
-               "-device", "lpc47m157", "-serial", f"tcp:127.0.0.1:{serial_port}",
+               "-device", "lpc47m157",
+               "-serial", f"file:{out / 'com1.bin'}",
+               "-serial", f"tcp:127.0.0.1:{serial_port}",
                "-qmp", f"tcp:127.0.0.1:{qmp_port},server,nowait"]
     if headless:
         command += ["-display", "none"]

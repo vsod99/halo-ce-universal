@@ -41,10 +41,11 @@ the program only 64 MB of a 128 MB console; `memory = "64"` keeps it), packs
 configuration: no welcome screen or boot animation, the configured memory,
 NAT networking, the ISO in the drive.
 
-A program logs with `xbox_log` (`common/xbox_log.c`) to COM1 of the debug
+A program logs with `xbox_log` (`common/xbox_log.c`) to COM2 of the debug
 kits' SuperIO chip, which xemu emulates (`-device lpc47m157`); the runner
 reads it from a socket, prints it, and saves it in
-`build/xbox/runs/<time>/log.txt` with xemu's own output (`xemu.txt`). A run
+`build/xbox/runs/<time>/log.txt` with xemu's own output (`xemu.txt`) and
+COM1's (`com1.bin`, the kernel debugger's when there is one). A run
 succeeds when the program prints `== XBOX DONE ==` (`xbox_log_done`), and
 fails at xemu's exit or the timeout (`--timeout`, 60 s), so it can be
 scripted: the exit status is 0 only for a finished run.
@@ -63,9 +64,28 @@ buffer and sent over the network, the same on xemu and the console.
 | --- | --- |
 | `probe` | Phase 0: whether an nxdk program can have the tag cache at physical 0x3A6000 and the native game state at 0x1A00000, where nxdk's start-up puts its image, stack and heap, and how much memory is left beside the caches |
 
-The probe's first results (xemu 0.8.136, Complex 4627, so 64 MB): the tag
-cache and the game state are had at exactly their addresses, and nxdk's
-image, stack and heap stay below 0x130000. 64,876 KB are free at start,
-21,868 KB once those and the sound cache are held: too little for the
-22,528 KB texture cache, before any of the game's code, heap, Direct3D or
-frame buffers. The native layout needs the 128 MB console.
+The probe's results (xemu 0.8.136):
+
+- With Complex 4627 (64 MB): the tag cache and the game state are had at
+  exactly their addresses, and nxdk's image, stack and heap stay below
+  0x130000. 64,876 KB are free at start, 21,868 KB once those and the sound
+  cache are held: too little for the 22,528 KB texture cache, before any of
+  the game's code, heap, Direct3D or frame buffers.
+- With Cerbios 3.1.0 beta (128 MB, `/LIMITMEM` cleared by the runner): the
+  kernel counts 131,072 KB, but gives contiguous memory
+  (`MmAllocateContiguousMemoryEx`, what `XPhysicalAlloc` is) only from the
+  low 64 MB; not one 64 KB step of the upper half can be had that way.
+  Ordinary virtual memory (`NtAllocateVirtualMemory`) does take pages from
+  the upper half, once the low half's free pages are used up.
+- So the layout that fits 128 MB: the tag cache at physical 0x3A6000, the
+  texture and sound caches contiguous anywhere in the low half (the GPU and
+  the sound hardware read them), and the 16 MB game state, which only the
+  CPU reads, as virtual memory at a fixed address (0x40000000) instead of at
+  physical 0x1A00000. All of it fits, with 63 MB free after a video mode.
+- The kernel gives virtual memory the low half's free pages first, so the
+  port must allocate everything contiguous first (the caches, and a pool for
+  Direct3D's frame buffers, push buffer and vertex buffers) and only then
+  the game state and heap, or the low half runs out.
+
+Cerbios's hybrid kernel runs its debugger on COM1 when it sees the SuperIO
+chip, so programs log on COM2; the runner saves COM1 as `com1.bin`.
