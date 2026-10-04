@@ -8,6 +8,21 @@ SDL_GL_GetProcAddress once the context exists (gl_functions_load).
 #ifndef __HALO_LINUX_GL_H
 #define __HALO_LINUX_GL_H
 
+#ifdef HALO_XBOX
+/* The original Xbox draws with its own GPU (port/xbox), not OpenGL. Only the
+types xgpu.h names. */
+typedef unsigned int GLuint;
+typedef unsigned int GLenum;
+typedef int GLint;
+/* the menus' bitmaps (menu_files.c) will be the Xbox renderer's textures;
+until it has one none are made, so there are none to delete */
+static inline void glDeleteTextures(int count, const GLuint *textures)
+{
+	(void)count;
+	(void)textures;
+}
+#else
+
 /* prototypes are declared only to give each pointer its exact type */
 #define GL_GLEXT_PROTOTYPES 1
 /* the XDK defines APIENTRY as __stdcall; OpenGL on Linux uses cdecl (on
@@ -492,5 +507,7 @@ pointers, sees the declarations without these aliases */
 
 /* returns FALSE (and logs) if a required function is missing */
 int gl_functions_load(void);
+
+#endif /* HALO_XBOX */
 
 #endif

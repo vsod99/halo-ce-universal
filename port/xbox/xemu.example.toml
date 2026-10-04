@@ -13,3 +13,8 @@ flashrom_path = ""   # flash BIOS image
 eeprom_path = ""     # optional: xemu makes one if empty
 hdd_path = ""        # hard disk image (xemu's prebuilt blank image is fine)
 memory = "128"       # "64" (retail) or "128" (upgraded)
+
+[game]
+# The Xbox maps the game reads (from your own Halo disc); never committed.
+maps_folder = ""     # a folder of .map files
+maps = "ui"          # those packed beside the XBE, comma separated (ui alone: the main menu)

@@ -378,6 +378,66 @@ unsigned int _clearfp(void)
 {
 	return 0;
 }
+#elif defined(HALO_XBOX)
+/* the Xbox's x87, which computes doubles, and its SSE unit, which computes
+floats: no C library environment (pdclib has none), so the control and
+status words are read and written directly, and the SSE unit's rounding and
+masks kept in step with the x87's, as glibc's fesetenv does */
+static unsigned short x87_control_word(void)
+{
+	unsigned short word;
+
+	__asm__ __volatile__("fnstcw %0" : "=m"(word));
+	return word;
+}
+
+static unsigned short x87_status_word(void)
+{
+	unsigned short word;
+
+	__asm__ __volatile__("fnstsw %0" : "=m"(word));
+	return word;
+}
+
+unsigned int _control87(unsigned int new_value, unsigned int mask)
+{
+	unsigned short word = x87_control_word();
+	unsigned int current = control_word_to_msvc(word);
+
+	if (mask)
+	{
+		unsigned int mxcsr;
+
+		current = (current & ~mask) | (new_value & mask);
+		word = msvc_to_control_word(current, word);
+		__asm__ __volatile__("fldcw %0" : : "m"(word));
+		/* MXCSR: the exception masks (bits 7-12) as the x87's (0-5), the
+		rounding mode (13-14) as the x87's (10-11) */
+		__asm__ __volatile__("stmxcsr %0" : "=m"(mxcsr));
+		mxcsr = (mxcsr & ~0x7f80u) | ((word & 0x3fu) << 7) | (((word >> 10) & 3u) << 13);
+		__asm__ __volatile__("ldmxcsr %0" : : "m"(mxcsr));
+	}
+	return current;
+}
+
+unsigned int _controlfp(unsigned int new_value, unsigned int mask)
+{
+	/* _controlfp ignores the denormal mask */
+	return _control87(new_value, mask & ~_EM_DENORMAL);
+}
+
+unsigned int _statusfp(void)
+{
+	return x87_status_word() & 0x3f;
+}
+
+unsigned int _clearfp(void)
+{
+	unsigned int status = x87_status_word() & 0x3f;
+
+	__asm__ __volatile__("fnclex");
+	return status;
+}
 #else
 /* x87: glibc's floating-point environment holds the control and status
 words (fegetenv and fesetenv save and load the whole x87 environment, and

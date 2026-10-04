@@ -25,6 +25,7 @@ reads back what was written: a retail console, without the chip, reads back
 #include <hal/debug.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 
 #define SUPERIO_CONFIG_PORT 0x2E
 #define SUPERIO_DATA_PORT 0x2F
@@ -111,31 +112,41 @@ void xbox_log_to_screen(int to_screen)
 	screen_output = to_screen;
 }
 
-void xbox_log(const char *format, ...)
+void xbox_log_write(const char *text)
 {
-	char line[512];
-	va_list arguments;
 	const char *character;
-
-	va_start(arguments, format);
-	vsnprintf(line, sizeof(line), format, arguments);
-	va_end(arguments);
 
 	if (serial_present)
 	{
-		for (character = line; *character; character++)
+		for (character = text; *character; character++)
 		{
 			if (*character == '\n')
 				serial_write_character('\r');
 			serial_write_character(*character);
 		}
-		serial_write_character('\r');
-		serial_write_character('\n');
 	}
 	if (screen_output)
 	{
-		debugPrint("%s\n", line);
+		debugPrint("%s", text);
 	}
+}
+
+void xbox_vlog(const char *format, va_list arguments)
+{
+	char line[512];
+
+	vsnprintf(line, sizeof(line) - 1, format, arguments);
+	strcat(line, "\n");
+	xbox_log_write(line);
+}
+
+void xbox_log(const char *format, ...)
+{
+	va_list arguments;
+
+	va_start(arguments, format);
+	xbox_vlog(format, arguments);
+	va_end(arguments);
 }
 
 void xbox_log_done(void)

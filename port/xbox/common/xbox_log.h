@@ -9,6 +9,8 @@ COM2 of the debug kits' SuperIO chip, which xemu emulates
 #ifndef __XBOX_LOG_H
 #define __XBOX_LOG_H
 
+#include <stdarg.h>
+
 /* the line tools/xbox_dev.py stops a run at, with success */
 #define XBOX_LOG_DONE_MARKER "== XBOX DONE =="
 
@@ -19,6 +21,9 @@ int xbox_log_initialize(int to_screen);
 video mode */
 void xbox_log_to_screen(int to_screen);
 void xbox_log(const char *format, ...);
+void xbox_vlog(const char *format, va_list arguments);
+/* text as it is (newlines as the serial port's CR LF) */
+void xbox_log_write(const char *text);
 /* ends the run: prints the done marker */
 void xbox_log_done(void);
 

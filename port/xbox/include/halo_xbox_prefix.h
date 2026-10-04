@@ -66,6 +66,13 @@ implementations of them see other names, as on Windows. */
 
 #include "../../windows/include/halo_windows_api_names.h"
 
+/* and the kernel's critical sections, which nxdk's kernel library exports
+under the same names */
+#define RtlEnterCriticalSection halo_xbox_RtlEnterCriticalSection
+#define RtlInitializeCriticalSection halo_xbox_RtlInitializeCriticalSection
+#define RtlLeaveCriticalSection halo_xbox_RtlLeaveCriticalSection
+#define RtlTryEnterCriticalSection halo_xbox_RtlTryEnterCriticalSection
+
 /* ---------- Winsock and source fixups shared with the Linux build */
 
 #ifndef HALO_LINUX_PLATFORM_LAYER

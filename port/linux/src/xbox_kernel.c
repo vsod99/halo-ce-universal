@@ -22,10 +22,23 @@ threads, asynchronous procedure calls, time, memory and debug output.
 
 /* ---------- logging */
 
+#ifdef HALO_XBOX
+/* the Xbox's C library has no standard error: lines go to its log (COM2 for
+the development loop, port/xbox/common/xbox_log.c) */
+void xbox_vlog(const char *format, va_list arguments);
+void xbox_log_write(const char *text);
+#endif
+
 void platform_log(const char *format, ...)
 {
 	va_list arguments;
 
+#ifdef HALO_XBOX
+	va_start(arguments, format);
+	xbox_vlog(format, arguments);
+	va_end(arguments);
+	return;
+#endif
 	fputs("halo-linux: ", stderr);
 	va_start(arguments, format);
 	vfprintf(stderr, format, arguments);
@@ -867,6 +880,11 @@ VOID WINAPI GlobalMemoryStatus(LPMEMORYSTATUS status)
 
 VOID WINAPI OutputDebugStringA(LPCSTR string)
 {
-	if (string)
-		fputs(string, stderr);
+	if (!string)
+		return;
+#ifdef HALO_XBOX
+	xbox_log_write(string);
+#else
+	fputs(string, stderr);
+#endif
 }
