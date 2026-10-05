@@ -10,7 +10,8 @@ binding hooks the game calls answer as having none.
 
 debug.test_input "press:SECONDS:BUTTON[,BUTTON...];..." presses buttons on
 the first controller at those seconds after the controllers are first read,
-each held 0.12 s and those of one time 0.52 s apart (as
+each held 0.12 s (BUTTON*SECONDS: that long) and those of one time 0.52 s
+apart (as
 `tools/xbox_dev.py run --input` does it, which needs no access to the
 Mac's screen); the desktop ports' "bot" and "look" scripts are not here.
 */
@@ -113,7 +114,8 @@ struct test_press
 	unsigned long at_ms;
 	WORD buttons;
 	signed char analog;
-	SHORT thumb_lx, thumb_ly;
+	SHORT thumb_lx, thumb_ly, thumb_rx, thumb_ry;
+	unsigned long hold_ms;
 };
 
 static struct test_press test_presses[TEST_PRESS_MAXIMUM];
@@ -127,7 +129,7 @@ static int test_press_parse_button(const char *name, size_t length, struct test_
 		const char *name;
 		WORD buttons;
 		signed char analog;
-		SHORT thumb_lx, thumb_ly;
+		SHORT thumb_lx, thumb_ly, thumb_rx, thumb_ry;
 	} names[] =
 	{
 		{ "a", 0, XINPUT_GAMEPAD_A, 0, 0 },
@@ -148,8 +150,20 @@ static int test_press_parse_button(const char *name, size_t length, struct test_
 		{ "ldown", 0, -1, 0, -32767 },
 		{ "lleft", 0, -1, -32767, 0 },
 		{ "lright", 0, -1, 32767, 0 },
+		{ "rup", 0, -1, 0, 0, 0, 32767 },
+		{ "rdown", 0, -1, 0, 0, 0, -32767 },
+		{ "rleft", 0, -1, 0, 0, -32767, 0 },
+		{ "rright", 0, -1, 0, 0, 32767, 0 },
 	};
+	const char *hold = memchr(name, '*', length);
 	size_t index;
+
+	press->hold_ms = TEST_PRESS_HOLD_MS;
+	if (hold)
+	{
+		press->hold_ms = (unsigned long)(atof(hold + 1) * 1000.0);
+		length = (size_t)(hold - name);
+	}
 
 	for (index = 0; index < sizeof(names) / sizeof(names[0]); index++)
 	{
@@ -159,6 +173,8 @@ static int test_press_parse_button(const char *name, size_t length, struct test_
 			press->analog = names[index].analog;
 			press->thumb_lx = names[index].thumb_lx;
 			press->thumb_ly = names[index].thumb_ly;
+			press->thumb_rx = names[index].thumb_rx;
+			press->thumb_ry = names[index].thumb_ry;
 			return 1;
 		}
 	}
@@ -166,7 +182,8 @@ static int test_press_parse_button(const char *name, size_t length, struct test_
 	return 0;
 }
 
-/* "press:32:a;35:down,a": at 32 s A, at 35 s down and half a second on A */
+/* "press:32:a;35:down,a;40:rright*2": at 32 s A, at 35 s down and half a
+second on A, at 40 s the right stick right for two seconds */
 static void test_press_load(void)
 {
 	const char *setting = config_string("debug.test_input");
@@ -225,7 +242,7 @@ static void test_press_apply(XINPUT_GAMEPAD *pad)
 	{
 		const struct test_press *press = &test_presses[index];
 
-		if (now < press->at_ms || now >= press->at_ms + TEST_PRESS_HOLD_MS)
+		if (now < press->at_ms || now >= press->at_ms + press->hold_ms)
 			continue;
 		pad->wButtons |= press->buttons;
 		if (press->analog >= 0)
@@ -234,6 +251,10 @@ static void test_press_apply(XINPUT_GAMEPAD *pad)
 			pad->sThumbLX = press->thumb_lx;
 		if (press->thumb_ly)
 			pad->sThumbLY = press->thumb_ly;
+		if (press->thumb_rx)
+			pad->sThumbRX = press->thumb_rx;
+		if (press->thumb_ry)
+			pad->sThumbRY = press->thumb_ry;
 	}
 }
 
