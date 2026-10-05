@@ -7,13 +7,21 @@ XINPUT_GAMEPAD as it is, so XInputGetState copies it; XInputSetState sets
 the motors. No debug keyboard (the console's, a USB keyboard, would need
 nxdk's HID driver), so no console. The desktop ports' keyboard, mouse and
 binding hooks the game calls answer as having none.
+
+debug.test_input "press:SECONDS:BUTTON[,BUTTON...];..." presses buttons on
+the first controller at those seconds after the controllers are first read,
+each held 0.12 s and those of one time 0.52 s apart (as
+`tools/xbox_dev.py run --input` does it, which needs no access to the
+Mac's screen); the desktop ports' "bot" and "look" scripts are not here.
 */
 
 #include "platform.h"
 #include "halo_keyboard.h"
 #include "nxdk_platform.h"
+#include "port_config.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define PORT_COUNT 4
@@ -94,6 +102,141 @@ static int controller_port(HANDLE device)
 	return -1;
 }
 
+/* ---------- scripted presses (debug.test_input "press:...") */
+
+#define TEST_PRESS_HOLD_MS 120
+#define TEST_PRESS_GAP_MS 520
+#define TEST_PRESS_MAXIMUM 64
+
+struct test_press
+{
+	unsigned long at_ms;
+	WORD buttons;
+	signed char analog;
+	SHORT thumb_lx, thumb_ly;
+};
+
+static struct test_press test_presses[TEST_PRESS_MAXIMUM];
+static int test_press_count = -1;
+static unsigned long test_press_start_ms;
+
+static int test_press_parse_button(const char *name, size_t length, struct test_press *press)
+{
+	static const struct
+	{
+		const char *name;
+		WORD buttons;
+		signed char analog;
+		SHORT thumb_lx, thumb_ly;
+	} names[] =
+	{
+		{ "a", 0, XINPUT_GAMEPAD_A, 0, 0 },
+		{ "b", 0, XINPUT_GAMEPAD_B, 0, 0 },
+		{ "x", 0, XINPUT_GAMEPAD_X, 0, 0 },
+		{ "y", 0, XINPUT_GAMEPAD_Y, 0, 0 },
+		{ "black", 0, XINPUT_GAMEPAD_BLACK, 0, 0 },
+		{ "white", 0, XINPUT_GAMEPAD_WHITE, 0, 0 },
+		{ "lt", 0, XINPUT_GAMEPAD_LEFT_TRIGGER, 0, 0 },
+		{ "rt", 0, XINPUT_GAMEPAD_RIGHT_TRIGGER, 0, 0 },
+		{ "up", XINPUT_GAMEPAD_DPAD_UP, -1, 0, 0 },
+		{ "down", XINPUT_GAMEPAD_DPAD_DOWN, -1, 0, 0 },
+		{ "left", XINPUT_GAMEPAD_DPAD_LEFT, -1, 0, 0 },
+		{ "right", XINPUT_GAMEPAD_DPAD_RIGHT, -1, 0, 0 },
+		{ "start", XINPUT_GAMEPAD_START, -1, 0, 0 },
+		{ "back", XINPUT_GAMEPAD_BACK, -1, 0, 0 },
+		{ "lup", 0, -1, 0, 32767 },
+		{ "ldown", 0, -1, 0, -32767 },
+		{ "lleft", 0, -1, -32767, 0 },
+		{ "lright", 0, -1, 32767, 0 },
+	};
+	size_t index;
+
+	for (index = 0; index < sizeof(names) / sizeof(names[0]); index++)
+	{
+		if (strlen(names[index].name) == length && !strncmp(names[index].name, name, length))
+		{
+			press->buttons = names[index].buttons;
+			press->analog = names[index].analog;
+			press->thumb_lx = names[index].thumb_lx;
+			press->thumb_ly = names[index].thumb_ly;
+			return 1;
+		}
+	}
+	platform_log("debug.test_input: no button \"%.*s\"", (int)length, name);
+	return 0;
+}
+
+/* "press:32:a;35:down,a": at 32 s A, at 35 s down and half a second on A */
+static void test_press_load(void)
+{
+	const char *setting = config_string("debug.test_input");
+	const char *item;
+
+	test_press_count = 0;
+	test_press_start_ms = GetTickCount();
+	if (strncmp(setting, "press:", 6))
+		return;
+	for (item = setting + 6; *item; )
+	{
+		const char *end = item + strcspn(item, ";");
+		const char *colon = memchr(item, ':', (size_t)(end - item));
+		unsigned long at_ms;
+		const char *name;
+
+		if (!colon)
+		{
+			platform_log("debug.test_input: \"%.*s\" is not SECONDS:BUTTON", (int)(end - item), item);
+			break;
+		}
+		at_ms = (unsigned long)(atof(item) * 1000.0);
+		for (name = colon + 1; name < end && test_press_count < TEST_PRESS_MAXIMUM; )
+		{
+			size_t length = strcspn(name, ",;");
+			struct test_press *press = &test_presses[test_press_count];
+
+			if (length > (size_t)(end - name))
+				length = (size_t)(end - name);
+			if (test_press_parse_button(name, length, press))
+			{
+				press->at_ms = at_ms;
+				test_press_count++;
+				at_ms += TEST_PRESS_GAP_MS;
+			}
+			name += length;
+			if (*name == ',')
+				name++;
+		}
+		item = *end ? end + 1 : end;
+	}
+	platform_log("debug.test_input: %d scripted presses", test_press_count);
+}
+
+static void test_press_apply(XINPUT_GAMEPAD *pad)
+{
+	unsigned long now;
+	int index;
+
+	if (test_press_count < 0)
+		test_press_load();
+	if (!test_press_count)
+		return;
+	now = GetTickCount() - test_press_start_ms;
+	for (index = 0; index < test_press_count; index++)
+	{
+		const struct test_press *press = &test_presses[index];
+
+		if (now < press->at_ms || now >= press->at_ms + TEST_PRESS_HOLD_MS)
+			continue;
+		pad->wButtons |= press->buttons;
+		if (press->analog >= 0)
+			pad->bAnalogButtons[press->analog] = 255;
+		if (press->thumb_lx)
+			pad->sThumbLX = press->thumb_lx;
+		if (press->thumb_ly)
+			pad->sThumbLY = press->thumb_ly;
+	}
+}
+
 DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 {
 	int port = controller_port(device);
@@ -102,6 +245,15 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	memset(state, 0, sizeof(*state));
 	if (port < 0 || !xbox_gamepad_report(port, (unsigned char *)&state->Gamepad, &reports))
 		return ERROR_DEVICE_NOT_CONNECTED;
+	if (port == 0)
+	{
+		XINPUT_GAMEPAD before = state->Gamepad;
+
+		test_press_apply(&state->Gamepad);
+		/* (a changed report is a new packet, as the hardware's) */
+		if (memcmp(&before, &state->Gamepad, sizeof(before)))
+			reports += 0x10000;
+	}
 	state->dwPacketNumber = reports;
 	return ERROR_SUCCESS;
 }
