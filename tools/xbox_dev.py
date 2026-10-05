@@ -27,6 +27,7 @@ program that hangs is stopped at the timeout.
 """
 
 import argparse
+import base64
 import json
 import os
 import shutil
@@ -36,6 +37,7 @@ import sys
 import tempfile
 import threading
 import time
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -126,7 +128,20 @@ def add_maps(config: dict, maps_dir: Path) -> None:
             shutil.copyfile(map_file, maps_dir / map_file.name)
 
 
-def build(config: dict, project: Path) -> Path:
+def write_environment(bin_dir: Path, environment: list) -> None:
+    """the --env NAME=VALUE settings as D:\\environment.txt, which the
+    game's getenv reads (port/xbox/src/nxdk_libc.c): the HALO_* overrides
+    of config.toml, which is on the Xbox's hard disk; none, no file"""
+    path = bin_dir / "environment.txt"
+    path.unlink(missing_ok=True)
+    for setting in environment:
+        if "=" not in setting:
+            sys.exit(f"--env {setting}: not NAME=VALUE")
+    if environment:
+        path.write_text("".join(f"{setting}\n" for setting in environment))
+
+
+def build(config: dict, project: Path, environment: list = ()) -> Path:
     """make the project's bin/default.xbe (an nxdk project with its
     Makefile, or the game, build/xbox/halo, with `ninja xbox`), set its
     memory limit to the configured console's, and pack bin/ into an ISO;
@@ -148,6 +163,7 @@ def build(config: dict, project: Path) -> Path:
     bin_dir = project / "bin"
     if project == ROOT / "build/xbox/halo":
         add_maps(config, bin_dir / "maps")
+    write_environment(bin_dir, list(environment))
     set_memory_limit(bin_dir / "default.xbe", config["console"].get("memory", "128") != "128")
     iso = ROOT / "build/xbox" / f"{project.name}.iso"
     iso.parent.mkdir(parents=True, exist_ok=True)
@@ -291,8 +307,8 @@ class Qmp:
 
 
 def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, presses: list,
-        shots: list) -> int:
-    iso = build(config, project)
+        shots: list, environment: list) -> int:
+    iso = build(config, project, environment)
     xemu = expand(config["tools"].get("xemu", "/Applications/xemu.app/Contents/MacOS/xemu"))
     out = ROOT / "build/xbox/runs" / time.strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
@@ -363,10 +379,56 @@ def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, 
     return status
 
 
+def write_png(path: Path, width: int, height: int, rows: list) -> None:
+    """an 8-bit RGB PNG of rows of width * 3 bytes (no Pillow needed)"""
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (len(data).to_bytes(4, "big") + kind + data +
+                (zlib.crc32(kind + data) & 0xffffffff).to_bytes(4, "big"))
+    header = width.to_bytes(4, "big") + height.to_bytes(4, "big") + bytes([8, 2, 0, 0, 0])
+    raw = b"".join(b"\0" + row for row in rows)
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(raw, 6)) +
+                     chunk(b"IEND", b""))
+
+
+class LogScreenshots:
+    """the frames the game writes to its log (debug.screenshot_every:
+    port/xbox/src/d3d8_nv2a.c) as frame-FRAME.png in the run's folder"""
+    def __init__(self, out: Path):
+        self.out = out
+        self.header = None
+        self.rows = []
+
+    def take(self, line: str) -> bool:
+        """whether the line was part of a frame (and so not the log's)"""
+        if line.startswith("screenshot ") and line != "screenshot end":
+            parts = line.split()
+            if len(parts) == 4 and all(part.isdigit() for part in parts[1:]):
+                self.header = tuple(int(part) for part in parts[1:])
+                self.rows = []
+                return True
+        if self.header is None:
+            return False
+        if line.startswith("~"):
+            self.rows.append(base64.b64decode(line[1:]))
+            return True
+        if line == "screenshot end":
+            frame, width, height = self.header
+            self.header = None
+            if len(self.rows) == height and all(len(row) == width * 3 for row in self.rows):
+                path = self.out / f"frame-{frame}.png"
+                write_png(path, width, height, self.rows)
+                print(f"(frame {path.relative_to(ROOT)})", flush=True)
+            else:
+                print(f"(frame {frame}: {len(self.rows)} of {height} rows; not saved)", flush=True)
+            return True
+        return False
+
+
 def stream_log(connection: socket.socket, path: Path, process: subprocess.Popen, deadline: float) -> int:
-    """prints and saves the program's serial lines; 0 at the done marker"""
+    """prints and saves the program's serial lines, its frames as PNGs; 0 at the done marker"""
     connection.settimeout(0.5)
     pending = b""
+    screenshots = LogScreenshots(path.parent)
     with path.open("w") as log:
         while time.time() < deadline and process.poll() is None:
             try:
@@ -379,6 +441,8 @@ def stream_log(connection: socket.socket, path: Path, process: subprocess.Popen,
             *lines, pending = pending.split(b"\n")
             for raw in lines:
                 line = raw.decode("latin-1").rstrip("\r")
+                if screenshots.take(line):
+                    continue
                 print(line, flush=True)
                 log.write(line + "\n")
                 log.flush()
@@ -434,6 +498,16 @@ def check_bootrom(path: Path) -> bool:
     return False
 
 
+def run_environment(args: argparse.Namespace) -> list:
+    """--env, with --input and --frames as the settings they stand for"""
+    environment = list(args.env)
+    if args.input:
+        environment.append("HALO_TEST_INPUT=press:" + ";".join(args.input))
+    if args.frames:
+        environment.append(f"HALO_SCREENSHOT_EVERY={args.frames}")
+    return environment
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -449,6 +523,15 @@ def main() -> None:
                             help=f"press controller buttons in xemu ({', '.join(PRESS_KEYS)}); repeatable")
     run_parser.add_argument("--shot", action="append", default=[], type=float, metavar="SECONDS",
                             help="save xemu's window as shot-SECONDS.png in the run's folder; repeatable")
+    run_parser.add_argument("--input", action="append", default=[], metavar="SECONDS:BUTTON,...",
+                            help="press buttons from inside the game (debug.test_input \"press:\"), timed from "
+                                 "its first controller read; needs no access to the Mac's screen; repeatable")
+    run_parser.add_argument("--frames", type=int, default=0, metavar="N",
+                            help="the game writes every Nth frame to the log, saved as frame-N.png "
+                                 "(debug.screenshot_every)")
+    run_parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
+                            help="an environment variable for the run, such as HALO_GPU_TRACE=1500 "
+                                 "(D:\\environment.txt); repeatable")
     args = parser.parse_args()
     config = load_config()
     if args.command == "doctor":
@@ -457,7 +540,7 @@ def main() -> None:
         print(build(config, args.project.resolve()))
         return
     sys.exit(run(config, args.project.resolve(), args.timeout, args.headless, args.gdb, parse_presses(args.press),
-            args.shot))
+            args.shot, run_environment(args)))
 
 
 if __name__ == "__main__":

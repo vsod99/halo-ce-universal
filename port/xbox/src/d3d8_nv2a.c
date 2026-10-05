@@ -36,6 +36,7 @@ flips between at the vertical blank.
 #include <nv_regs.h>
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -1450,14 +1451,23 @@ static BOOL trace_frame(void)
 
 static void trace_draw(const char *kind, DWORD primitive, unsigned long count)
 {
-	const DWORD *texture = (const DWORD *)device.textures[0];
+	char textures[4 * 20] = "";
+	size_t used = 0;
+	int stage;
 
-	platform_log("trace %s prim %lu count %lu target %08lx viewport %lu,%lu %lux%lu tex0 %08lx/%08lx modes %08lx "
+	/* each stage's texture: its data and format words */
+	for (stage = 0; stage < 4; stage++)
+	{
+		const DWORD *texture = (const DWORD *)device.textures[stage];
+
+		used += snprintf(textures + used, sizeof(textures) - used, " %08lx/%08lx",
+			texture ? (unsigned long)texture[1] : 0, texture ? (unsigned long)texture[3] : 0);
+	}
+	platform_log("trace %s prim %lu count %lu target %08lx viewport %lu,%lu %lux%lu tex%s modes %08lx "
 		"blend %d %lx %lx zenable %lu colorwrite %08lx", kind, (unsigned long)primitive, count,
 		device.render_target ? (unsigned long)device.render_target->Data : 0, (unsigned long)device.viewport.X,
 		(unsigned long)device.viewport.Y, (unsigned long)device.viewport.Width, (unsigned long)device.viewport.Height,
-		texture ? (unsigned long)texture[1] : 0, texture ? (unsigned long)texture[3] : 0,
-		(unsigned long)D3D__RenderState[D3DRS_PSTEXTUREMODES], (int)D3D__RenderState[D3DRS_ALPHABLENDENABLE],
+		textures, (unsigned long)D3D__RenderState[D3DRS_PSTEXTUREMODES], (int)D3D__RenderState[D3DRS_ALPHABLENDENABLE],
 		(unsigned long)D3D__RenderState[D3DRS_SRCBLEND], (unsigned long)D3D__RenderState[D3DRS_DESTBLEND],
 		(unsigned long)D3D__RenderState[D3DRS_ZENABLE], (unsigned long)D3D__RenderState[D3DRS_COLORWRITEENABLE]);
 }
@@ -1678,6 +1688,50 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 
 /* ---------- presentation */
 
+void xbox_log_write(const char *text);
+
+/* debug.screenshot_every on the Xbox: the frame goes to the log, which the
+development loop saves as a PNG in its run's folder (tools/xbox_dev.py),
+as "screenshot FRAME WIDTH HEIGHT", a line of base64 RGB a row, each
+starting "~", and "screenshot end" (xemu downloads a surface the CPU
+reads, so the back buffer in memory is what the GPU drew) */
+static void screenshot_to_log(unsigned long frame)
+{
+	static const char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	static char line[1 + SCREEN_WIDTH * 4 + 2];
+	unsigned long width, height, pitch, x, y;
+	const BYTE *pixels;
+	char header[64];
+
+	xbox_gpu_screen(&width, &height, &pitch);
+	if (width > SCREEN_WIDTH)
+		return;
+	pixels = (const BYTE *)(device.back_buffer.Data | 0x80000000UL);
+	snprintf(header, sizeof(header), "screenshot %lu %lu %lu\n", frame, width, height);
+	xbox_log_write(header);
+	for (y = 0; y < height; y++)
+	{
+		const BYTE *row = pixels + y * pitch;
+		char *out = line;
+
+		*out++ = '~';
+		/* a pixel's red, green and blue, three bytes, as four digits */
+		for (x = 0; x < width; x++)
+		{
+			DWORD value = (DWORD)row[x * 4 + 2] << 16 | (DWORD)row[x * 4 + 1] << 8 | row[x * 4];
+
+			*out++ = digits[value >> 18 & 63];
+			*out++ = digits[value >> 12 & 63];
+			*out++ = digits[value >> 6 & 63];
+			*out++ = digits[value & 63];
+		}
+		*out++ = '\n';
+		*out = 0;
+		xbox_log_write(line);
+	}
+	xbox_log_write("screenshot end\n");
+}
+
 void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destination_rectangle,
 	void *unused, void *unused2)
 {
@@ -1691,6 +1745,14 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	(dynamic vertices, textures the caches replace): each frame is
 	finished before the next begins */
 	xbox_gpu_wait_idle();
+	{
+		static long screenshot_every = -1;
+
+		if (screenshot_every < 0)
+			screenshot_every = config_integer("debug.screenshot_every");
+		if (screenshot_every > 0 && (frame + 1) % (unsigned long)screenshot_every == 0)
+			screenshot_to_log(frame + 1);
+	}
 	xbox_gpu_present();
 	/* pbkit drew its own surface methods for the next back buffer */
 	device.back_buffer.Data = xbox_gpu_back_buffer();

@@ -8,7 +8,10 @@ objects' functions is defined here whole):
 - the printf family: pdclib formats no floating point numbers;
 - strtod and atof: pdclib has none (nxdk's assert);
 - fmod, which pdclib computes with one partial remainder; scalbn and
-  lrint, which assert; frexp, wrong at zero.
+  lrint, which assert; frexp, wrong at zero;
+- getenv, which has no environment: here the NAME=VALUE lines of
+  D:\\environment.txt, which `tools/xbox_dev.py run --env` writes (the
+  HALO_* overrides of config.toml, which is on the hard disk).
 
 The replacements are musl's (port/third_party/musl-stdio), which round as
 glibc's and the Windows UCRT's do; lrint is the x87's own rounding.
@@ -145,6 +148,49 @@ float strtof(const char *text, char **end)
 double atof(const char *text)
 {
 	return halo_musl_strtod(text, NULL);
+}
+
+/* ---------- the environment */
+
+char *getenv(const char *name)
+{
+	static char text[4096];
+	static char *entries[64];
+	static int count = -1;
+	size_t length = strlen(name);
+	int index;
+
+	if (count < 0)
+	{
+		FILE *file = fopen("D:\\environment.txt", "r");
+		size_t size = 0;
+		char *line, *end;
+
+		count = 0;
+		if (file)
+		{
+			size = fread(text, 1, sizeof(text) - 1, file);
+			fclose(file);
+		}
+		text[size] = 0;
+		for (line = text; *line && count < (int)(sizeof(entries) / sizeof(entries[0])); line = end)
+		{
+			end = line + strcspn(line, "\r\n");
+			if (*end)
+				*end++ = 0;
+			if (*line)
+			{
+				entries[count++] = line;
+				xbox_log("environment: %s", line);
+			}
+		}
+	}
+	for (index = 0; index < count; index++)
+	{
+		if (!strncmp(entries[index], name, length) && entries[index][length] == '=')
+			return entries[index] + length + 1;
+	}
+	return NULL;
 }
 
 /* ---------- maths (long double is double: the Microsoft ABI's) */
