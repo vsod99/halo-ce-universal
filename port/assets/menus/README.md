@@ -13,6 +13,7 @@ controller, the keyboard and the mouse, on every port.
 | `NON_HANDDRAWN.md` | The pictures that are not redraws: those drawn from the Xbox's map (the player's own), and the placeholders, to be redrawn |
 | `UNWIRED.md` | The menus' functions that do nothing yet: the lists they fill are empty, and the settings they change do not change |
 | `menus.json` | The files the game embeds |
+| `xbox/` | The original Xbox's copies of the pictures, at the size they are drawn (`tools/xbox_menu_art.py`; `sources.json` names each one's original) |
 
 `tools/ce_menus.py` writes all of them from the PC version's tags and the
 redraws, but the settings screens (Controls Setup, Gamepads, Mouse, Audio,
@@ -20,7 +21,8 @@ Video and Network Setup), which `tools/port_settings.py` writes in their
 style with what this port has to set: config.toml's settings (a window or
 the full screen, the frame rate, the volumes, internet play, the
 multiplayer HUD), the profile's controller settings, and the keyboard and
-mouse's controls.
+mouse's controls. After either changes a picture, `tools/xbox_menu_art.py`
+makes the Xbox's copies again (its build stops until then).
 
 To change the menus without building the game, put files in a `menus` folder
 next to `config.toml`. A file with the same path as one here replaces it. On

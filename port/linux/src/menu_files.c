@@ -1079,22 +1079,37 @@ void halo_menus_art_forget(void)
 	art_count = 0;
 }
 
-unsigned int menu_art_texture(unsigned long data, unsigned long *levels)
+static long art_find(unsigned long data)
 {
 	long index;
 
 	for (index = 0; index < art_count; index++)
 	{
 		if (art[index].data == data)
-			break;
+			return index;
 	}
+	return -1;
+}
+
+const unsigned char *menu_art_png(unsigned long data, unsigned long *size)
+{
+	long index = art_find(data);
+
+	*size = 0;
 	/* (no png: out of memory registering it) */
-	if (index == art_count || art[index].failed || !art[index].png)
+	return index < 0 || !art[index].png ? NULL : file_data(art[index].png, size);
+}
+
+unsigned int menu_art_texture(unsigned long data, unsigned long *levels)
+{
+	long index = art_find(data);
+
+	if (index < 0 || art[index].failed || !art[index].png)
 		return 0;
 	if (!art[index].texture)
 	{
 		unsigned long size = 0;
-		const unsigned char *png = file_data(art[index].png, &size);
+		const unsigned char *png = menu_art_png(data, &size);
 
 		art[index].texture = png ? hud_hires_png_texture(png, size, &art[index].levels) : 0;
 		if (!art[index].texture)

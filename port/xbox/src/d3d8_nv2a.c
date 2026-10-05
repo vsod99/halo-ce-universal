@@ -15,6 +15,12 @@ The game is Xbox code, so most of it needs no translation:
 - the enumerations (comparisons, blend factors, primitive types, vertex
   types, clear flags) are the NV2A's values.
 
+The PC menus' pictures (PNGs, menu_files.c) stand in for the small
+placeholder textures the game draws for their bitmaps, as on the other
+ports; the Xbox build embeds copies at the size they are drawn
+(tools/xbox_menu_art.py), decoded when first drawn and kept while there is
+room (art_texture).
+
 The other render and texture stage states are kept in D3D__RenderState and
 D3D__TextureState and written before the next draw, as the SDK's Direct3D
 does with its deferred states. The back buffer is pbkit's: one of three it
@@ -24,6 +30,8 @@ flips between at the vertical blank.
 #include "xgpu.h"
 #include "nxdk_platform.h"
 #include "port_config.h"
+#include "menu_files.h"
+#include "png_decode.h"
 
 #include <nv_regs.h>
 
@@ -885,12 +893,186 @@ static DWORD texture_mag_filter(DWORD mag)
 	return mag >= D3DTEXF_QUINCUNX ? 4 : mag == D3DTEXF_POINT ? 1 : 2;
 }
 
+/* ---------- the PC menus' pictures */
+
+/* the most memory the decoded pictures keep, and the largest side one has
+(a picture from a menus folder may be a desktop's) */
+#define ART_BUDGET (8UL * 1024 * 1024)
+#define ART_LARGEST 1024
+#define ART_TEXTURES 256
+
+struct art_texture
+{
+	/* the placeholder texture's Data, and the PNG decoded for it */
+	DWORD placeholder;
+	const unsigned char *png;
+	void *texels;
+	DWORD data, format;
+	unsigned long bytes;
+	unsigned long last_frame;
+	BOOL failed;
+};
+
+static struct art_texture art_textures[ART_TEXTURES];
+static unsigned long art_bytes;
+
+static unsigned long largest_power_of_two(unsigned long value, unsigned long most)
+{
+	unsigned long result = 1;
+
+	while (result * 2 <= value && result * 2 <= most)
+		result *= 2;
+	return result;
+}
+
+/* the NV2A's swizzled order: the bits of x and y interleaved, x first,
+the larger side's last bits alone */
+static unsigned long swizzle_offset(unsigned long x, unsigned long y, unsigned long width, unsigned long height)
+{
+	unsigned long offset = 0, bit = 1, mask;
+
+	for (mask = 1; mask < width || mask < height; mask <<= 1)
+	{
+		if (mask < width)
+		{
+			if (x & mask)
+				offset |= bit;
+			bit <<= 1;
+		}
+		if (mask < height)
+		{
+			if (y & mask)
+				offset |= bit;
+			bit <<= 1;
+		}
+	}
+	return offset;
+}
+
+static void art_release(struct art_texture *art)
+{
+	if (art->texels)
+	{
+		platform_contiguous_free(art->texels);
+		art_bytes -= art->bytes;
+	}
+	memset(art, 0, sizeof(*art));
+}
+
+/* makes room for that many bytes from the pictures no draw of this frame
+uses (the GPU has finished the frames before it: Present) */
+static void art_make_room(unsigned long bytes)
+{
+	while (art_bytes + bytes > ART_BUDGET)
+	{
+		struct art_texture *oldest = NULL;
+		int index;
+
+		for (index = 0; index < ART_TEXTURES; index++)
+		{
+			struct art_texture *art = &art_textures[index];
+
+			if (art->texels && art->last_frame != frame_number && (!oldest || art->last_frame < oldest->last_frame))
+				oldest = art;
+		}
+		if (!oldest)
+			return;
+		art_release(oldest);
+	}
+}
+
+static void art_decode(struct art_texture *art, const unsigned char *png, unsigned long png_size)
+{
+	unsigned long png_width = 0, png_height = 0, width, height, x, y;
+	unsigned char *pixels = png_decode(png, png_size, &png_width, &png_height);
+	DWORD *texels;
+
+	if (!pixels)
+	{
+		platform_log("menus: a picture is not an 8-bit RGBA PNG; not drawn");
+		art->failed = TRUE;
+		return;
+	}
+	/* a power of two each side (the copies the build embeds are already
+	that size), sampled nearest */
+	width = largest_power_of_two(png_width, ART_LARGEST);
+	height = largest_power_of_two(png_height, ART_LARGEST);
+	art_make_room(width * height * 4);
+	texels = platform_contiguous_alloc(width * height * 4, D3DTEXTURE_ALIGNMENT, PLATFORM_ANY_PHYSICAL_ADDRESS,
+		PAGE_READWRITE);
+	if (!texels)
+	{
+		platform_log("menus: no memory for a %lux%lu picture; not drawn", width, height);
+		free(pixels);
+		art->failed = TRUE;
+		return;
+	}
+	for (y = 0; y < height; y++)
+	{
+		const unsigned char *row = pixels + (y * png_height / height) * png_width * 4;
+
+		for (x = 0; x < width; x++)
+		{
+			const unsigned char *rgba = row + (x * png_width / width) * 4;
+
+			texels[swizzle_offset(x, y, width, height)] =
+				(DWORD)rgba[3] << 24 | (DWORD)rgba[0] << 16 | (DWORD)rgba[1] << 8 | rgba[2];
+		}
+	}
+	free(pixels);
+	art->texels = texels;
+	art->bytes = width * height * 4;
+	art_bytes += art->bytes;
+	art->data = PLATFORM_VIRTUAL_TO_PHYSICAL(texels);
+	art->format = ((DWORD)D3DFMT_A8R8G8B8 << D3DFORMAT_FORMAT_SHIFT) | (1 << D3DFORMAT_MIPMAP_SHIFT) |
+		(log2_unsigned(width) << D3DFORMAT_USIZE_SHIFT) | (log2_unsigned(height) << D3DFORMAT_VSIZE_SHIFT) |
+		(2 << D3DFORMAT_DIMENSION_SHIFT) | D3DFORMAT_BORDERSOURCE_COLOR | D3DFORMAT_DMACHANNEL_A;
+}
+
+/* the picture standing for a texture, or NULL: only the menus' 4x4
+placeholders have one */
+static const struct art_texture *art_texture(const DWORD *header, const struct xgpu_texture_description *description)
+{
+	struct art_texture *art = NULL, *free_slot = NULL;
+	unsigned long png_size;
+	const unsigned char *png;
+	int index;
+
+	if (description->width != 4 || description->height != 4 || description->format != D3DFMT_A8R8G8B8)
+		return NULL;
+	png = menu_art_png(header[1], &png_size);
+	if (!png)
+		return NULL;
+	for (index = 0; index < ART_TEXTURES && !art; index++)
+	{
+		if (art_textures[index].placeholder == header[1])
+			art = &art_textures[index];
+		else if (!free_slot && !art_textures[index].placeholder)
+			free_slot = &art_textures[index];
+	}
+	/* (the menus may give the placeholder another picture) */
+	if (art && art->png != png)
+		art_release(art);
+	else if (!art && !(art = free_slot))
+		return NULL;
+	if (!art->placeholder)
+	{
+		art->placeholder = header[1];
+		art->png = png;
+		art_decode(art, png, png_size);
+	}
+	art->last_frame = frame_number;
+	return art->failed ? NULL : art;
+}
+
 static void texture_stage_apply(DWORD *(*p), int stage)
 {
 	const DWORD *ts = D3D__TextureState[stage];
 	const DWORD *header = (const DWORD *)device.textures[stage];
 	struct xgpu_texture_description description;
 	DWORD base = NV097_SET_TEXTURE_OFFSET + stage * 64;
+	DWORD offset = header ? header[1] : 0, format = header ? header[3] : 0;
+	const struct art_texture *art;
 	DWORD control, filter, max_lod, anisotropy = 0;
 	float bias;
 	long bias_fixed;
@@ -901,6 +1083,13 @@ static void texture_stage_apply(DWORD *(*p), int stage)
 		return;
 	}
 	xgpu_texture_describe(header[3], header[4], &description);
+	art = art_texture(header, &description);
+	if (art)
+	{
+		offset = art->data;
+		format = art->format;
+		description.levels = 1;
+	}
 	max_lod = description.levels > 1 ? (description.levels - 1) << 8 : 0;
 	if (max_lod > 0xfff)
 		max_lod = 0xfff;
@@ -923,8 +1112,8 @@ static void texture_stage_apply(DWORD *(*p), int stage)
 	/* offset, format, address, control 0 and 1, filter, image rectangle,
 	palette and border color are consecutive methods */
 	*(*p)++ = METHOD(base, 2);
-	*(*p)++ = header[1] & 0x03ffffff;
-	*(*p)++ = header[3];
+	*(*p)++ = offset & 0x03ffffff;
+	*(*p)++ = format;
 	PUSH1(*p, base + 0x08, (ts[D3DTSS_ADDRESSU] & 0xf) | (ts[D3DTSS_ADDRESSV] & 0xf) << 8 |
 		(ts[D3DTSS_ADDRESSW] & 0xf) << 16 | D3D__RenderState[D3DRS_WRAP0 + stage]);
 	PUSH2(*p, base + 0x0c, control, description.linear ? description.pitch << 16 : 0);
