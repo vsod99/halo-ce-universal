@@ -64,14 +64,14 @@ pictures change.
 | `nxdk_gamepads.c` | The controllers through nxdk's USB host stack (started before the game takes its memory: its pool is contiguous); each port's latest report |
 | `xinput_xbox.c` | The SDK's `XInput*` over them (a report is an `XINPUT_GAMEPAD`), rumble; the menus' text fields on the game's on-screen keyboard (`platform_text_field_on_screen`) |
 | `xbox_platform.c` | The desktop's hooks as the Xbox answers them; no high-res HUD or text, no internet play yet |
+| `nxdk_audio.c` | The sound output for Linux's DirectSound mixer (`port/linux/src/dsound_sdl.c`): 48 kHz stereo through the AC'97 controller, a thread above the game's keeping about 64 ms of its descriptors mixed ahead (the ring set aside before the game takes its memory); the log has the mixing's share of the processor every 30 s. The APU is not used yet |
 | `nxdk_net.c` | The sockets under Linux's Winsock layer (`port/linux/src/xnet.c`) over lwIP, which the build compiles with the loopback interface (`lwip_config/lwipopts.h`): nxdk's Ethernet driver (started before the game takes its memory), the address from DHCP or link-local in the background, XNet's link the cable's. A split screen game joins its own host through 127.0.0.1 |
 
 Threads, mutexes, condition variables and clocks are the Windows build's
-(`port/windows/src/win32_threads.c`, nxdk has those Windows calls); sound
-a null one (`dsound_null.c`) until phase 3, and the texture layout without
-OpenGL (`texture_layout.c`). The game's own log (debug.txt, on
-the read-only D: here) goes to COM2 with the rest, its lines marked
-`debug.txt:`.
+(`port/windows/src/win32_threads.c`, nxdk has those Windows calls), and the
+texture layout without OpenGL is `texture_layout.c`. The game's own log
+(debug.txt, on the read-only D: here) goes to COM2 with the rest, its lines
+marked `debug.txt:`.
 
 `debug.start_map` (`--env HALO_START_MAP=b30`) starts a map the menus do not
 reach a few seconds into the main menu: a campaign level at normal, any
@@ -134,7 +134,9 @@ the network as well, which works on both.
 xemu's QMP has no `screendump`, since xemu draws with its own renderer:
 `--shot SECONDS` saves xemu's window that long after the program's first
 log line as `shot-SECONDS.png` in the run's folder (the terminal needs
-macOS's Screen Recording permission). On the console, pictures of frames
+macOS's Screen Recording permission). `--wav` records the sound card as
+`sound.wav` there instead of playing it (xemu's `-audio driver=wav`;
+xemu writes it at 44.1 kHz). On the console, pictures of frames
 will come from the program over the network.
 
 ## Programs
