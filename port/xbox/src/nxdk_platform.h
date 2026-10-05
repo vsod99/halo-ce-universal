@@ -32,6 +32,12 @@ const unsigned char *xbox_net_ethernet_address(void);
 /* whether the cable is plugged in (XNet's link status: port/linux/src/xnet.c) */
 int xbox_net_link_up(void);
 
+/* the sound output (nxdk_audio.c, for port/linux/src/dsound_sdl.c): 48 kHz
+stereo, which the mixer writes as floats, frames at a time, from a thread
+of its own; false if it cannot start */
+typedef void (*xbox_audio_mix_function)(float *output, unsigned long frames);
+int xbox_audio_start(xbox_audio_mix_function mix);
+
 /* the GPU through pbkit (nxdk_nv2a.c, for d3d8_nv2a.c) */
 /* context DMAs over all of the low 64 MB for the color and depth buffers */
 #define XBOX_GPU_DMA_COLOR 18

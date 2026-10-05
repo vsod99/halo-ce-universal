@@ -2,14 +2,16 @@
 DSOUND_SDL.C
 
 Xbox DirectSound for the Linux build: a software mixer on an SDL3 audio
-stream.
+stream. The Xbox build mixes with it too, onto the AC'97 controller
+(port/xbox/src/nxdk_audio.c) instead of SDL.
 
 The game plays everything through DirectSound streams: 16-bit stereo PCM
 (music and other uncompressed sounds) and Xbox ADPCM, mono or stereo, at 22
 or 44 kHz. A packet is decoded to 16-bit PCM when the game submits it, since
 the sound cache may reuse its memory once the packet completes. The mixer
-runs on SDL's audio thread; for every voice it resamples to the output rate
-with a windowed sinc low pass (which is how SetFrequency changes pitch;
+runs on SDL's audio thread (on the Xbox, a thread of its own); for every
+voice it resamples to the output rate with a windowed sinc low pass (on the
+Xbox, linearly: its mix_voice) (which is how SetFrequency changes pitch;
 resampling) and applies:
 	- the stream volume (millibels),
 	- the front left and right mix bin volumes of 2D voices,
@@ -35,11 +37,15 @@ turns the reverb off; audio.enabled = false skips opening a device
 */
 
 #include "platform.h"
-#include "sdl_platform.h"
 #include "port_config.h"
 #include "voice_audio.h"
 
+#ifdef HALO_XBOX
+#include "nxdk_platform.h"
+#else
+#include "sdl_platform.h"
 #include <SDL3/SDL.h>
+#endif
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -125,6 +131,9 @@ struct sdl_stream
 	unsigned long packet_count;
 	/* the next frame to take from the first packet not finished */
 	unsigned long cursor;
+	/* (the Xbox's mix_voice: the cursor's fraction, of 2^32, the cursor itself
+	the frame in the first packet not finished) */
+	unsigned int cursor_fraction;
 	/* the resampler's (resampler_reset): the last RESAMPLER_HISTORY frames
 	taken, each channel's apart and each frame twice, RESAMPLER_HISTORY apart,
 	so that the frames a low pass reaches are side by side however the ring
@@ -624,12 +633,115 @@ static void resampler_reset(struct sdl_stream *stream)
 	stream->silence = 0;
 }
 
-static float packet_sample(const struct voice_packet *packet, unsigned long frame, unsigned long channel,
-	unsigned long channels)
+#ifdef HALO_XBOX
+/* the first packet with frames still to play at the cursor, marking those
+before it played out; NULL once all are */
+static struct voice_packet *stream_playing_packet(struct sdl_stream *stream)
 {
-	return packet->samples[frame * channels + channel] * (1.0f / 32768.0f);
+	for (;;)
+	{
+		struct voice_packet *packet = NULL;
+		unsigned long position;
+
+		for (position = 0; position < stream->packet_count; position++)
+		{
+			struct voice_packet *candidate = &stream->packets[(stream->packet_head + position) % MAXIMUM_STREAM_PACKETS];
+
+			if (!candidate->finished)
+			{
+				packet = candidate;
+				break;
+			}
+		}
+		if (!packet || stream->cursor < packet->frames)
+			return packet;
+		stream->cursor -= packet->frames;
+		packet->finished = TRUE;
+	}
 }
 
+/* ---------- mixing */
+
+/* mixes one voice into output (frames of stereo float), interpolating
+linearly and sending nothing to the reverb (the windowed sinc's taps and the
+reverb are more than the Xbox's processor has to spare); the cursor is fixed
+point, since converting a double to an integer every sample costs two
+changes of the x87's control word on the Xbox's processor */
+static void mix_voice(struct sdl_stream *stream, float *output, float *send, unsigned long frames)
+{
+	DWORD rate;
+	unsigned long step, last_channel;
+	unsigned int step_fraction;
+	float target_left, target_right, left, right, ramp_left, ramp_right;
+	float target_room, target_direct_lowpass, target_room_lowpass;
+	BOOL silent;
+	unsigned long frame = 0;
+
+	(void)send;
+	if (stream->paused || !stream->packet_count || !stream->sample_rate)
+		return;
+	rate = stream->frequency ? stream->frequency : stream->sample_rate;
+	step = rate / OUTPUT_RATE;
+	step_fraction = (unsigned int)(((unsigned long long)(rate % OUTPUT_RATE) << 32) / OUTPUT_RATE);
+	voice_gains(stream, &target_left, &target_right, &target_room, &target_direct_lowpass, &target_room_lowpass);
+	if (!stream->gains_valid)
+	{
+		stream->current_left = target_left;
+		stream->current_right = target_right;
+		stream->gains_valid = TRUE;
+	}
+	left = stream->current_left;
+	right = stream->current_right;
+	ramp_left = (target_left - left) / (float)frames;
+	ramp_right = (target_right - right) / (float)frames;
+	/* a voice that cannot be heard only moves on */
+	silent = left == 0.0f && right == 0.0f && target_left == 0.0f && target_right == 0.0f;
+	last_channel = stream->channels - 1;
+
+	while (frame < frames)
+	{
+		struct voice_packet *packet = stream_playing_packet(stream);
+		const short *samples;
+		unsigned long packet_frames, cursor;
+		unsigned int cursor_fraction;
+
+		if (!packet)
+			break;
+		samples = packet->samples;
+		packet_frames = packet->frames;
+		cursor = stream->cursor;
+		cursor_fraction = stream->cursor_fraction;
+		for (; frame < frames && cursor < packet_frames; frame++)
+		{
+			if (!silent)
+			{
+				const short *a = samples + cursor * stream->channels;
+				/* (the packet's last frame is held, not blended into the next) */
+				const short *b = cursor + 1 < packet_frames ? a + stream->channels : a;
+				/* (24 bits of the fraction, which a float holds exactly) */
+				float fraction = (float)(long)(cursor_fraction >> 8) * (1.0f / 16777216.0f);
+				float a0 = a[0], a1 = a[last_channel];
+				float sample_left = (a0 + ((float)b[0] - a0) * fraction) * (1.0f / 32768.0f);
+				float sample_right = (a1 + ((float)b[last_channel] - a1) * fraction) * (1.0f / 32768.0f);
+
+				/* (a mono voice's mix bins or pan split it across the
+				speakers: its one channel is both) */
+				output[frame * 2] += sample_left * left;
+				output[frame * 2 + 1] += sample_right * right;
+			}
+			left += ramp_left;
+			right += ramp_right;
+			cursor_fraction += step_fraction;
+			cursor += step + (cursor_fraction < step_fraction);
+		}
+		stream->cursor = cursor;
+		stream->cursor_fraction = cursor_fraction;
+	}
+	stream->current_left = target_left;
+	stream->current_right = target_right;
+}
+
+#else
 /* the voice's next frame, finishing the packets it passes; FALSE once they
 run out */
 static BOOL take_frame(struct sdl_stream *stream, float *frame)
@@ -872,6 +984,7 @@ static void mix_voice(struct sdl_stream *stream, float *output, float *send, uns
 	stream->current_direct_lowpass = target_direct_lowpass;
 	stream->current_room_lowpass = target_room_lowpass;
 }
+#endif
 
 /* ---------- reverb
 
@@ -1292,8 +1405,9 @@ static void mix(float *output, unsigned long frames)
 
 /* ---------- output */
 
-static SDL_AudioStream *audio_stream;
 static BOOL audio_started = FALSE;
+
+#ifndef HALO_XBOX
 /* the device it plays on (audio.output_device), and when it was looked at */
 static char audio_device_name[PLATFORM_AUDIO_DEVICE_NAME_SIZE];
 static unsigned long audio_device_read_at = (unsigned long)-1;
@@ -1305,6 +1419,8 @@ static const char *audio_device_setting(void)
 
 	return name && name[0] ? name : "default";
 }
+
+static SDL_AudioStream *audio_stream;
 
 static void SDLCALL audio_callback(void *userdata, SDL_AudioStream *stream, int additional_amount, int total_amount)
 {
@@ -1325,6 +1441,7 @@ static void SDLCALL audio_callback(void *userdata, SDL_AudioStream *stream, int 
 		additional_amount -= (int)(frames * OUTPUT_CHANNELS * sizeof(float));
 	}
 }
+#endif
 
 /* without a device, drain voices in real time */
 static void *silent_clock_thread(void *parameter)
@@ -1350,7 +1467,9 @@ static void *silent_clock_thread(void *parameter)
 
 static void audio_start(void)
 {
+#ifndef HALO_XBOX
 	SDL_AudioSpec spec;
+#endif
 
 	if (audio_started)
 		return;
@@ -1361,6 +1480,10 @@ static void audio_start(void)
 	resampler_phases_initialize();
 	reverb_initialize();
 
+#ifdef HALO_XBOX
+	if (config_boolean("audio.enabled") && xbox_audio_start(mix))
+		return;
+#else
 	if (config_boolean("audio.enabled") && platform_sdl_initialize())
 	{
 		spec.format = SDL_AUDIO_F32;
@@ -1390,6 +1513,7 @@ static void audio_start(void)
 		}
 		platform_log("cannot open an audio device (%s); sound is silent", SDL_GetError());
 	}
+#endif
 	{
 		pthread_t thread;
 
@@ -1398,6 +1522,7 @@ static void audio_start(void)
 	}
 }
 
+#ifndef HALO_XBOX
 /* (the event thread, each frame: sdl_platform.c) audio.output_device
 changed (Settings > Audio): the sound goes on on the new device, else the
 system's default */
@@ -1435,6 +1560,7 @@ void dsound_sdl_output_device_check(void)
 		pthread_detach(thread);
 	}
 }
+#endif
 
 /* ---------- completion */
 
@@ -1588,7 +1714,7 @@ static HRESULT STDMETHODCALLTYPE stream_process(IDirectSoundStream *object, LPCX
 	if (!stream->packet_count)
 	{
 		/* a stream that ran dry starts over */
-		stream->cursor = 0;
+		stream->cursor = stream->cursor_fraction = 0;
 		resampler_reset(stream);
 		stream->gains_valid = FALSE;
 	}
@@ -1617,7 +1743,7 @@ static HRESULT STDMETHODCALLTYPE stream_flush(IDirectSoundStream *object)
 		stream_complete_head(stream, XMEDIAPACKET_STATUS_FLUSHED,
 			head->finished ? head->packet.dwMaxSize : 0);
 	}
-	stream->cursor = 0;
+	stream->cursor = stream->cursor_fraction = 0;
 	resampler_reset(stream);
 	/* (the next sound on the channel says where it is) */
 	stream->stereo_positioned = FALSE;

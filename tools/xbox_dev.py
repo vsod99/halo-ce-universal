@@ -307,7 +307,7 @@ class Qmp:
 
 
 def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, presses: list,
-        shots: list, environment: list) -> int:
+        shots: list, environment: list, wav: bool = False) -> int:
     iso = build(config, project, environment)
     xemu = expand(config["tools"].get("xemu", "/Applications/xemu.app/Contents/MacOS/xemu"))
     out = ROOT / "build/xbox/runs" / time.strftime("%Y%m%d-%H%M%S")
@@ -331,6 +331,10 @@ def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, 
                "-qmp", f"tcp:127.0.0.1:{qmp_port},server,nowait"]
     if headless:
         command += ["-display", "none"]
+    if wav:
+        # the sound card's output to a file instead of the Mac's speakers
+        # (xemu names no audio backend of its own to capture from)
+        command += ["-audio", f"driver=wav,path={out / 'sound.wav'}"]
     if gdb:
         command += ["-s", "-S"]
         print("gdb: target remote localhost:1234 (the CPU waits for 'continue')")
@@ -375,8 +379,26 @@ def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, 
         except subprocess.TimeoutExpired:
             process.kill()
         shutil.rmtree(work, ignore_errors=True)
+    if wav:
+        finish_wav(out / "sound.wav")
     print(f"run saved in {out.relative_to(ROOT)}")
     return status
+
+
+def finish_wav(path: Path) -> None:
+    """the RIFF and data sizes of a WAV file xemu wrote without them (it
+    writes them only when it exits cleanly)"""
+    if not path.exists() or path.stat().st_size < 44:
+        return
+    with path.open("r+b") as file:
+        header = file.read(44)
+        if header[:4] != b"RIFF" or header[36:40] != b"data":
+            return
+        size = path.stat().st_size
+        file.seek(4)
+        file.write((size - 8).to_bytes(4, "little"))
+        file.seek(40)
+        file.write((size - 44).to_bytes(4, "little"))
 
 
 def write_png(path: Path, width: int, height: int, rows: list) -> None:
@@ -533,6 +555,8 @@ def main() -> None:
                             help="the game writes every Nth frame to the log, saved as frame-N.png "
                                  "(debug.screenshot_every), and the targets besides the screen it drew into "
                                  "as frame-N-ADDRESS.png")
+    run_parser.add_argument("--wav", action="store_true",
+                            help="record the sound as sound.wav in the run's folder (48 kHz stereo)")
     run_parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
                             help="an environment variable for the run, such as HALO_GPU_TRACE=1500 "
                                  "(D:\\environment.txt); repeatable")
@@ -544,7 +568,7 @@ def main() -> None:
         print(build(config, args.project.resolve()))
         return
     sys.exit(run(config, args.project.resolve(), args.timeout, args.headless, args.gdb, parse_presses(args.press),
-            args.shot, run_environment(args)))
+            args.shot, run_environment(args), args.wav))
 
 
 if __name__ == "__main__":
