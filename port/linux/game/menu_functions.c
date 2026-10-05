@@ -819,6 +819,13 @@ static void campaign_start(char const *map_name, short difficulty, short control
 	ui_play_audio_feedback_sound(SOUND_FORWARD);
 }
 
+/* debug.start_map (network_test.c): a map at normal difficulty, started
+as the campaign's menus start one, for maps no menu reaches yet */
+void pc_menu_start_map(char const *map_name)
+{
+	campaign_start(map_name, 1, 0);
+}
+
 static boolean campaign_fail(void)
 {
 	ui_play_audio_feedback_sound(SOUND_ERROR);

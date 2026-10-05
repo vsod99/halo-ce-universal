@@ -81,6 +81,8 @@ void network_distributed_item_statistics(long *creates, long *deletes, long *fai
 void network_damage_statistics(long *sent_reports, long *dealt_reports, long *rejected_reports, long *replayed_events);
 /* xinput_sdl.c's */
 void test_input_hold_action(int hold);
+/* menu_functions.c's */
+void pc_menu_start_map(char const *map_name);
 
 enum
 {
@@ -122,6 +124,9 @@ static struct
 	boolean browsing;
 	boolean browse_listed;
 	float browse_seconds;
+	/* debug.start_map: started this many seconds into the main menu */
+	real start_map_seconds;
+	boolean start_map_done;
 } network_test;
 
 /* the variant at the index of the list (copied to name), FALSE past its end */
@@ -746,6 +751,18 @@ void network_test_update(
 {
 	if (!network_test.checked)
 		network_test_read_settings();
+	/* debug.start_map: a map to look at, such as a later level, which no
+	menu offers a new profile; a few seconds into the main menu, once */
+	if (main_menu_loaded && !network_test.start_map_done && *config_string("debug.start_map"))
+	{
+		network_test.start_map_seconds += seconds;
+		if (network_test.start_map_seconds >= 3.0f)
+		{
+			network_test.start_map_done = TRUE;
+			platform_log("debug.start_map: %s", config_string("debug.start_map"));
+			pc_menu_start_map(config_string("debug.start_map"));
+		}
+	}
 	if (network_test.mode == _network_test_off)
 		return;
 
