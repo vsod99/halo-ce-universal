@@ -129,6 +129,9 @@ ULONG WINAPI D3DResource_Release(D3DResource *resource)
 	return count;
 }
 
+#ifndef HALO_XBOX
+/* the OpenGL devices copy what they draw from; the Xbox's GPU reads the
+resources themselves (port/xbox/src/d3d8_nv2a.c) */
 BOOL WINAPI D3DResource_IsBusy(D3DResource *resource)
 {
 	(void)resource;
@@ -138,6 +141,15 @@ BOOL WINAPI D3DResource_IsBusy(D3DResource *resource)
 void WINAPI D3DResource_BlockUntilNotBusy(D3DResource *resource)
 {
 	(void)resource;
+}
+#endif
+
+/* as the Xbox's Direct3D, a lock waits for the draws that use the
+resource, unless it promises not to overwrite what they read */
+static void lock_wait(void *resource, DWORD flags)
+{
+	if (!(flags & (D3DLOCK_READONLY | D3DLOCK_NOOVERWRITE)))
+		D3DResource_BlockUntilNotBusy((D3DResource *)resource);
 }
 
 /* ---------- textures */
@@ -247,14 +259,14 @@ static void lock_level(const DWORD *resource, unsigned long face, unsigned long 
 
 void WINAPI D3DTexture_LockRect(D3DTexture *texture, UINT level, D3DLOCKED_RECT *locked, CONST RECT *rectangle, DWORD flags)
 {
-	(void)flags;
+	lock_wait(texture, flags);
 	lock_level((const DWORD *)texture, 0, level, locked, rectangle);
 }
 
 void WINAPI D3DCubeTexture_LockRect(D3DCubeTexture *texture, D3DCUBEMAP_FACES face, UINT level,
 	D3DLOCKED_RECT *locked, CONST RECT *rectangle, DWORD flags)
 {
-	(void)flags;
+	lock_wait(texture, flags);
 	lock_level((const DWORD *)texture, (unsigned long)face, level, locked, rectangle);
 }
 
@@ -266,7 +278,7 @@ void WINAPI D3DVolumeTexture_LockBox(D3DVolumeTexture *texture, UINT level, D3DL
 	unsigned long row_pitch, slice;
 	char *bits;
 
-	(void)flags;
+	lock_wait(texture, flags);
 	xgpu_texture_describe(resource[3], resource[4], &description);
 	row_pitch = xgpu_texture_level_pitch(&description, level);
 	slice = row_pitch * level_dimension(description.height, level);
@@ -336,7 +348,7 @@ void WINAPI D3DSurface_GetDesc(D3DSurface *surface, D3DSURFACE_DESC *description
 
 void WINAPI D3DSurface_LockRect(D3DSurface *surface, D3DLOCKED_RECT *locked, CONST RECT *rectangle, DWORD flags)
 {
-	(void)flags;
+	lock_wait(surface, flags);
 	lock_level((const DWORD *)surface, 0, 0, locked, rectangle);
 }
 
@@ -366,9 +378,10 @@ HRESULT WINAPI D3DDevice_CreateVertexBuffer(UINT length, DWORD usage, DWORD fvf,
 
 void WINAPI D3DVertexBuffer_Lock(D3DVertexBuffer *buffer, UINT offset, UINT size, BYTE **data, DWORD flags)
 {
-	/* (whatever the flags say: the decals' vertices are written under
-	D3DLOCK_READONLY) */
-	(void)flags;
+	/* (the decals' vertices are written under D3DLOCK_READONLY: on the Xbox
+	they are mirrored to memory the GPU reads, so a lock waits only on the
+	flags, as the SDK's) */
+	lock_wait(buffer, flags);
 	*data = buffer->Data ? (BYTE *)resource_data(buffer->Data) + offset : NULL;
 	if (*data)
 		memory_watch_prepare_write(*data, size);
@@ -433,7 +446,7 @@ HRESULT WINAPI D3DDevice_CreatePalette(D3DPALETTESIZE size, D3DPalette **result)
 
 void WINAPI D3DPalette_Lock(D3DPalette *palette, D3DCOLOR **colors, DWORD flags)
 {
-	(void)flags;
+	lock_wait(palette, flags);
 	*colors = (D3DCOLOR *)resource_data(palette->Data);
 	if (*colors)
 		memory_watch_prepare_write(*colors, 256 * sizeof(D3DCOLOR));

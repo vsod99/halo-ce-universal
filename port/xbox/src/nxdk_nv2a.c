@@ -15,7 +15,8 @@ pbkit's own context DMAs for the color and depth buffers start at its
 buffers. The device draws into the game's surfaces wherever they are, so
 it binds two more over all of the low 64 MB (XBOX_GPU_DMA_COLOR and
 _ZETA), as pbkit's texture and vertex ones already are. A third
-(XBOX_GPU_DMA_REPORT) is the visibility tests' reports.
+(XBOX_GPU_DMA_REPORT) is the visibility tests' reports, with the fence
+after them.
 */
 
 #include <hal/video.h>
@@ -57,11 +58,12 @@ __attribute__((constructor)) static void gpu_start(void)
 	pb_bind_channel(&color_dma);
 	pb_bind_channel(&zeta_dma);
 	/* uncached: the CPU reads what the GPU writes */
-	reports = MmAllocateContiguousMemoryEx(XBOX_GPU_REPORT_BYTES, 0, 0x03ffffff, 4096,
+	reports = MmAllocateContiguousMemoryEx(XBOX_GPU_FENCE_OFFSET + 16, 0, 0x03ffffff, 4096,
 		PAGE_READWRITE | PAGE_NOCACHE);
 	if (reports)
 	{
-		pb_create_dma_ctx(XBOX_GPU_DMA_REPORT, DMA_CLASS_3D, (DWORD)reports, XBOX_GPU_REPORT_BYTES - 1,
+		reports[XBOX_GPU_FENCE_OFFSET / 4] = 0;
+		pb_create_dma_ctx(XBOX_GPU_DMA_REPORT, DMA_CLASS_3D, (DWORD)reports, XBOX_GPU_FENCE_OFFSET + 16 - 1,
 			&report_dma);
 		pb_bind_channel(&report_dma);
 	}
@@ -122,6 +124,17 @@ void xbox_gpu_wait_idle(void)
 {
 	while (pb_busy())
 		;
+}
+
+unsigned long xbox_gpu_fence(void)
+{
+	return reports ? reports[XBOX_GPU_FENCE_OFFSET / 4] : 0;
+}
+
+void xbox_gpu_wait_fence(unsigned long fence)
+{
+	while ((long)(xbox_gpu_fence() - fence) < 0)
+		NtYieldExecution();
 }
 
 void xbox_gpu_present(void)

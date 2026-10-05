@@ -24,7 +24,9 @@ room (art_texture).
 The other render and texture stage states are kept in D3D__RenderState and
 D3D__TextureState and written before the next draw, as the SDK's Direct3D
 does with its deferred states. The back buffer is pbkit's: one of three it
-flips between at the vertical blank.
+flips between at the vertical blank. The CPU makes a frame while the GPU
+draws the one before; fences tell it when what it overwrites is no longer
+read (the synchronisation section).
 */
 
 #include "xgpu.h"
@@ -148,6 +150,7 @@ static struct
 
 	struct
 	{
+		D3DVertexBuffer *buffer;
 		DWORD data;
 		UINT stride;
 	} streams[16];
@@ -622,7 +625,98 @@ void WINAPI D3DDevice_SetShaderConstantMode(D3DSHADERCONSTANTMODE mode)
 	device.shader_constant_mode = mode;
 }
 
-/* ---------- synchronisation */
+/* ---------- synchronisation
+
+The GPU writes a count into the reports' memory once it has drawn all
+that comes before it in the push buffer (a semaphore release: the fence,
+nxdk_nv2a.c). Each frame ends with one, and the CPU makes the next frame
+while the GPU draws it.
+
+As the Xbox's Direct3D keeps its push buffer time there, a resource's Lock
+field holds the fence after the last draw that used it (resource_used), or
+0. The texture cache waits for it before it gives a texture's memory to
+another (D3DResource_IsBusy), and so does a lock that may overwrite what
+the GPU reads (d3d8_resources.c): the dynamic vertices' first lock of each
+frame. */
+
+static DWORD fence_inserted;
+
+static DWORD fence_insert(void)
+{
+	DWORD *p;
+
+	if (!xbox_gpu_reports())
+		return fence_inserted;
+	p = push_begin(6);
+	PUSH1(p, NV097_SET_CONTEXT_DMA_SEMAPHORE, XBOX_GPU_DMA_REPORT);
+	PUSH1(p, NV097_SET_SEMAPHORE_OFFSET, XBOX_GPU_FENCE_OFFSET);
+	PUSH1(p, NV097_BACK_END_WRITE_SEMAPHORE_RELEASE, ++fence_inserted);
+	push_end(p);
+	return fence_inserted;
+}
+
+/* a fence of this frame's draws so far is sent first */
+static BOOL fence_passed(DWORD fence)
+{
+	if (!xbox_gpu_reports())
+		return !xbox_gpu_busy();
+	if ((LONG)(fence - fence_inserted) > 0)
+		fence_insert();
+	return (LONG)(xbox_gpu_fence() - fence) >= 0;
+}
+
+static void fence_wait(DWORD fence)
+{
+	if (!xbox_gpu_reports())
+	{
+		xbox_gpu_wait_idle();
+		return;
+	}
+	if ((LONG)(fence - fence_inserted) > 0)
+		fence_insert();
+	xbox_gpu_wait_fence(fence);
+}
+
+/* a draw or clear uses it: busy until the next fence */
+static void resource_used(void *resource)
+{
+	if (resource)
+		((DWORD *)resource)[2] = fence_inserted + 1;
+}
+
+/* the fence a resource waits for, or 0: resources from the maps come with
+other values there, which no draw wrote */
+static DWORD resource_fence(D3DResource *resource)
+{
+	DWORD fence = ((const DWORD *)resource)[2];
+
+	if ((LONG)(fence - (fence_inserted + 1)) > 0)
+	{
+		static BOOL logged;
+
+		if (!logged)
+			platform_log("Direct3D: a resource's lock field holds %08lx, no fence (%08lx sent)",
+				(unsigned long)fence, (unsigned long)fence_inserted);
+		logged = TRUE;
+		return 0;
+	}
+	return fence;
+}
+
+BOOL WINAPI D3DResource_IsBusy(D3DResource *resource)
+{
+	DWORD fence = resource_fence(resource);
+
+	return fence && !fence_passed(fence);
+}
+
+void WINAPI D3DResource_BlockUntilNotBusy(D3DResource *resource)
+{
+	DWORD fence = resource_fence(resource);
+
+	if (fence)
+		fence_wait(fence);
+}
 
 BOOL WINAPI D3DDevice_IsBusy(void)
 {
@@ -1007,7 +1101,7 @@ static void art_release(struct art_texture *art)
 }
 
 /* makes room for that many bytes from the pictures no draw of this frame
-uses (the GPU has finished the frames before it: Present) */
+or the last uses (the GPU has finished the frames before those: Present) */
 static void art_make_room(unsigned long bytes)
 {
 	while (art_bytes + bytes > ART_BUDGET)
@@ -1019,7 +1113,7 @@ static void art_make_room(unsigned long bytes)
 		{
 			struct art_texture *art = &art_textures[index];
 
-			if (art->texels && art->last_frame != frame_number && (!oldest || art->last_frame < oldest->last_frame))
+			if (art->texels && art->last_frame + 2 <= frame_number && (!oldest || art->last_frame < oldest->last_frame))
 				oldest = art;
 		}
 		if (!oldest)
@@ -1419,6 +1513,7 @@ void WINAPI D3DDevice_SetStreamSource(UINT stream_number, D3DVertexBuffer *strea
 {
 	if (stream_number >= 16)
 		return;
+	device.streams[stream_number].buffer = stream_data;
 	device.streams[stream_number].data = stream_data ? stream_data->Data : 0;
 	device.streams[stream_number].stride = stride;
 	device.arrays_dirty = TRUE;
@@ -1468,6 +1563,17 @@ static void arrays_apply(UINT base)
 
 static void prepare_draw(UINT base)
 {
+	int index;
+
+	for (index = 0; index < D3DTSS_MAXSTAGES; index++)
+	{
+		resource_used(device.textures[index]);
+		resource_used(device.palettes[index]);
+	}
+	for (index = 0; index < 16; index++)
+		resource_used(device.streams[index].buffer);
+	resource_used(device.render_target);
+	resource_used(device.depth_stencil);
 	if (device.surface_dirty)
 		surface_apply();
 	if (device.states_dirty)
@@ -1664,6 +1770,8 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 
 	if (device.surface_dirty)
 		surface_apply();
+	resource_used(device.render_target);
+	resource_used(device.depth_stencil);
 	if (!device.depth_stencil)
 		flags &= ~(DWORD)(D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL);
 	flags &= D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL;
@@ -1774,33 +1882,51 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	void *unused, void *unused2)
 {
 	static unsigned long frame;
+	static DWORD last_frame_fence;
+	DWORD fence;
 
 	(void)source_rectangle;
 	(void)destination_rectangle;
 	(void)unused;
 	(void)unused2;
-	/* the CPU does not yet know when the GPU has read what it draws from
-	(dynamic vertices, textures the caches replace): each frame is
-	finished before the next begins */
-	xbox_gpu_wait_idle();
+	fence = fence_insert();
 	{
 		static long screenshot_every = -1;
 
 		if (screenshot_every < 0)
 			screenshot_every = config_integer("debug.screenshot_every");
 		if (screenshot_every > 0 && (frame + 1) % (unsigned long)screenshot_every == 0)
+		{
+			fence_wait(fence);
 			screenshot_to_log(frame + 1);
+		}
 	}
 	xbox_gpu_present();
+	/* the GPU draws this frame while the CPU makes the next; the one
+	before must be finished (what the frames' draws read: synchronisation) */
+	fence_wait(last_frame_fence);
+	last_frame_fence = fence;
 	/* pbkit drew its own surface methods for the next back buffer */
 	device.back_buffer.Data = xbox_gpu_back_buffer();
 	device.surface_dirty = TRUE;
 	flip_count++;
 	frame++;
 	frame_number = frame;
-	/* how far a run got, now and then */
+	/* how far a run got, now and then, and how fast since the last time
+	(by the vertical blanks: 60 a second) */
 	if (frame <= 3 || frame % 300 == 0)
-		platform_log("frame %lu", frame);
+	{
+		static unsigned long last_frame, last_blank;
+		unsigned long blank = xbox_gpu_vertical_blank_count();
+
+		if (last_blank && blank != last_blank)
+			platform_log("frame %lu, %lu.%lu fps", frame, (frame - last_frame) * 60 / (blank - last_blank),
+				(frame - last_frame) * 600 / (blank - last_blank) % 10);
+		else
+			platform_log("frame %lu", frame);
+		last_frame = frame;
+		last_blank = blank;
+	}
 }
 
 HRESULT WINAPI D3DDevice_PersistDisplay(void)

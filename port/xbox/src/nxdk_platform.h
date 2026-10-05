@@ -40,6 +40,9 @@ int xbox_net_link_up(void);
 the pixel count, a word the GPU zeroes), for indices 0 to 0xfff */
 #define XBOX_GPU_DMA_REPORT 20
 #define XBOX_GPU_REPORT_BYTES (4096UL * 16)
+/* after them, the fence: the count the GPU writes once it has drawn all
+before it (d3d8_nv2a.c) */
+#define XBOX_GPU_FENCE_OFFSET XBOX_GPU_REPORT_BYTES
 /* whether pbkit started (with the video mode) */
 int xbox_gpu_ready(void);
 void xbox_gpu_screen(unsigned long *width, unsigned long *height, unsigned long *pitch);
@@ -53,6 +56,10 @@ unsigned long *xbox_gpu_begin(unsigned long dwords);
 void xbox_gpu_end(unsigned long *end);
 int xbox_gpu_busy(void);
 void xbox_gpu_wait_idle(void);
+/* the count the GPU last wrote at XBOX_GPU_FENCE_OFFSET, and a wait,
+yielding to the other threads, until it reaches that count */
+unsigned long xbox_gpu_fence(void);
+void xbox_gpu_wait_fence(unsigned long fence);
 /* shows the back buffer at the next vertical blank; the next one then
 becomes the back buffer */
 void xbox_gpu_present(void);
