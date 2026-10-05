@@ -130,6 +130,17 @@ static void write_to_debug_file(
 	FILE *file = debug_file;
 	char prefix[32];
 
+#ifdef HALO_XBOX
+	/* d: is the disc there: the lines go to the log (COM2) instead */
+	{
+		extern void platform_log(const char *format, ...);
+
+		(void)file;
+		(void)date;
+		platform_log("debug.txt: %s", string);
+		return;
+	}
+#endif
 	if (!file)
 	{
 		FILE *opened = fopen("d:\\debug.txt", "a+b");

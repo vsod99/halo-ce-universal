@@ -4010,6 +4010,8 @@ static struct
 {
 	wchar_t name[NETWORK_GAME_NAME_LENGTH];
 	long maximum_players;
+	/* (automated tests: network_game_server_port_set_minimum_players) */
+	long minimum_players;
 } network_game_server_port_settings;
 
 static void network_game_server_port_settings_apply(
@@ -4025,6 +4027,18 @@ static void network_game_server_port_settings_apply(
 		server->game.maximum_players = (byte)PIN(network_game_server_port_settings.maximum_players, 2,
 			MAXIMUM_NETWORK_PLAYER_COUNT);
 	}
+	if (network_game_server_port_settings.minimum_players > 0)
+		server->game.minimum_players = (char)PIN(network_game_server_port_settings.minimum_players, 1, 2);
+}
+
+void network_game_server_port_set_minimum_players(
+	long minimum_players)
+{
+	struct network_game_server *server = global_network_game_server_get();
+
+	network_game_server_port_settings.minimum_players = minimum_players;
+	if (server)
+		network_game_server_port_settings_apply(server);
 }
 
 void network_game_server_port_set_settings(

@@ -81,6 +81,10 @@ void network_game_server_port_set_cooperative_friendly_fire(
 PLAYER COLLISIONS), kept for the levels after */
 void network_game_server_port_set_cooperative_player_collisions(
 	boolean player_collisions);
+/* port: the fewest players a game starts with (0: the game's two), for the
+automated tests' one-player split screen games (port/linux/game/network_test.c) */
+void network_game_server_port_set_minimum_players(
+	long minimum_players);
 boolean network_game_server_ban_player(
 	char const *text);
 /* port: the host's kick command: as the ban command, but nothing kept (no
