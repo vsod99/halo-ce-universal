@@ -154,6 +154,11 @@ static struct
 	D3DBaseTexture *textures[D3DTSS_MAXSTAGES];
 	D3DPalette *palettes[D3DTSS_MAXSTAGES];
 
+	/* the surface format last written, and the target's size when it is
+	swizzled (0 when it is linear) */
+	DWORD surface_format;
+	DWORD swizzled_width, swizzled_height;
+
 	/* to write before the next draw */
 	BOOL surface_dirty;
 	BOOL states_dirty;
@@ -329,6 +334,9 @@ static void surface_apply(void)
 		zeta_pitch = zeta.linear ? zeta.pitch : zeta.width * (zeta_format == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? 2 : 4);
 	}
 	format = color_format | (zeta_format ? zeta_format : NV097_SET_SURFACE_FORMAT_ZETA_Z24S8) << 4;
+	device.surface_format = format;
+	device.swizzled_width = color.linear ? 0 : color.width;
+	device.swizzled_height = color.linear ? 0 : color.height;
 	if (color.linear)
 		format |= NV097_SET_SURFACE_FORMAT_TYPE_PITCH << 8;
 	else
@@ -1639,6 +1647,26 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 
 		if (left >= right || top >= bottom)
 			continue;
+		if (device.swizzled_width)
+		{
+			/* the NV2A clears no swizzled surface; the whole of one in one
+			value is the same in any order, so it is cleared as a pitch
+			surface, and the next draw makes it swizzled again */
+			if (left || top || (DWORD)right != device.swizzled_width || (DWORD)bottom != device.swizzled_height)
+			{
+				static BOOL logged;
+
+				if (!logged)
+					platform_log("Direct3D: part of a %lux%lu swizzled target not cleared",
+						(unsigned long)device.swizzled_width, (unsigned long)device.swizzled_height);
+				logged = TRUE;
+				continue;
+			}
+			p = push_begin(2);
+			PUSH1(p, NV097_SET_SURFACE_FORMAT, device.surface_format | NV097_SET_SURFACE_FORMAT_TYPE_PITCH << 8);
+			push_end(p);
+			device.surface_dirty = TRUE;
+		}
 		p = push_begin(10);
 		PUSH2(p, NV097_SET_CLEAR_RECT_HORIZONTAL, (DWORD)left | (DWORD)(right - 1) << 16,
 			(DWORD)top | (DWORD)(bottom - 1) << 16);

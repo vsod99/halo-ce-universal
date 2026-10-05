@@ -402,6 +402,18 @@ static long rasterizer_decals_draw_order(
 	return count;
 }
 
+#ifdef HALO_XBOX
+/* the original Xbox (port/xbox): the game state is virtual memory there
+(cache/physical_memory_map.c), which the GPU cannot read, so the vertices
+are written in the game state, which saves and reverts them, and copied
+into contiguous memory the vertex buffer points at as each lock ends and
+after each load */
+static byte *local_game_state_vertices = NULL;
+static byte *local_gpu_vertices = NULL;
+static unsigned long local_locked_offset = 0;
+static unsigned long local_locked_size = 0;
+#endif
+
 /* ---------- public code */
 
 void rasterizer_decal_vertices_end_update(
@@ -433,12 +445,18 @@ void *_rasterizer_decal_vertices_lock(
 		local_vertex_cache,
 		cache_index);
 	rasterizer_globals.current_lock_operation = _rasterizer_lock_decal_vertices;
+#ifdef HALO_XBOX
+	vertex_data = local_game_state_vertices + vertex_data_offset;
+	local_locked_offset = vertex_data_offset;
+	local_locked_size = cache_size;
+#else
 	IDirect3DVertexBuffer8_Lock(
 		local_d3d_vertex_buffer,
 		vertex_data_offset,
 		cache_size,
 		&vertex_data,
 		D3DLOCK_READONLY);
+#endif
 	rasterizer_globals.current_lock_operation = _rasterizer_lock_none;
 
 	return vertex_data;
@@ -447,6 +465,12 @@ void *_rasterizer_decal_vertices_lock(
 void _rasterizer_decal_vertices_unlock(
 	void)
 {
+#ifdef HALO_XBOX
+	memcpy(
+		local_gpu_vertices + local_locked_offset,
+		local_game_state_vertices + local_locked_offset,
+		local_locked_size);
+#endif
 	IDirect3DVertexBuffer8_Unlock(local_d3d_vertex_buffer);
 
 	return;
@@ -490,6 +514,10 @@ void _rasterizer_decals_update_function_pointers(
 		local_vertex_cache,
 		rasterizer_decal_vertices_purge_proc,
 		rasterizer_decal_vertices_locked_proc);
+#ifdef HALO_XBOX
+	/* (called after each load of the game state) */
+	memcpy(local_gpu_vertices, local_game_state_vertices, DECAL_VERTEX_CACHE_SIZE);
+#endif
 
 	return;
 }
@@ -514,6 +542,12 @@ void _rasterizer_decals_initialize(
 		"decal vertices",
 		NULL,
 		DECAL_VERTEX_CACHE_SIZE);
+#ifdef HALO_XBOX
+	local_game_state_vertices = (byte *)local_d3d_vertex_buffer->Data;
+	local_gpu_vertices = XPhysicalAlloc(DECAL_VERTEX_CACHE_SIZE, -1, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
+	match_assert(__FILE__, __LINE__, local_gpu_vertices);
+	local_d3d_vertex_buffer->Data = (unsigned long)local_gpu_vertices;
+#endif
 	local_d3d_vertex_buffer->Lock = 0;
 	match_assert(
 		"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox_decals.c",
@@ -557,6 +591,10 @@ void _rasterizer_decals_dispose(
 		IDirect3DVertexBuffer8_Release(local_d3d_vertex_buffer);
 		local_d3d_vertex_buffer = NULL;
 	}
+#ifdef HALO_XBOX
+	XPhysicalFree(local_gpu_vertices);
+	local_gpu_vertices = NULL;
+#endif
 	lruv_delete(local_vertex_cache);
 
 	return;
@@ -870,6 +908,11 @@ void _rasterizer_decals_draw(
 			byte *vertex_data;
 
 			IDirect3DVertexBuffer8_Lock(local_d3d_vertex_buffer, 0, 0, &vertex_data, D3DLOCK_READONLY);
+#ifdef HALO_XBOX
+			/* the game state's copy: the GPU's is write-combined, slow to read */
+			if (vertex_data)
+				vertex_data = local_game_state_vertices;
+#endif
 			if (vertex_data)
 			{
 				if (decal_batch_count == DECAL_BATCH_MAXIMUM_DECALS)

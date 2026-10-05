@@ -78,8 +78,8 @@ void physical_memory_allocate(
 	/* the original Xbox (port/xbox): the kernel gives contiguous memory only
 	from the low 64 MB, and ordinary virtual memory takes that half's free
 	pages first, so the caches, which the GPU and the sound hardware read,
-	are had first; then the game state, which only the CPU reads but for
-	the decals' vertices (rasterizer_xbox_decals.c), as virtual memory at
+	are had first; then the game state, which only the CPU reads (the decals
+	copy their vertices out: rasterizer_xbox_decals.c), as virtual memory at
 	its fixed address (port/xbox/src/nxdk_memory.c) */
 	{
 		extern void *xbox_game_state_allocate(unsigned long address, unsigned long size);
