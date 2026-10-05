@@ -1420,6 +1420,12 @@ void rasterizer_set_target_as_texture(
 				rasterizer_globals.fps_accumulation_frame_index & 1];
 
 			match_assert("c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox.c", 2415, max_mipmap==0);
+#ifdef HALO_XBOX
+			/* pbkit turns three frame buffers, not the two these textures
+			follow by the frame's parity: each use names this frame's (an
+			older one shows another frame, or one cleared for the next) */
+			render_primary->Data = 0;
+#endif
 			if (!render_primary->Data)
 			{
 				D3DSurface *d3d_backbuffer;
