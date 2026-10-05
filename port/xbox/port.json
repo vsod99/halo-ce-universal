@@ -8,6 +8,7 @@
     "port/linux/src/msvc_crt.c",
     "port/linux/src/msvc_wide.c",
     "port/linux/src/p2p_sanitize.c",
+    "port/linux/src/png_decode.c",
     "port/linux/src/port_config.c",
     "port/linux/src/xbdm.c",
     "port/linux/src/xbox_files.c",

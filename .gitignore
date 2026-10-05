@@ -22,6 +22,7 @@ compile_commands.json
 xbox/
 !source/**/xbox/
 !port/xbox/
+!port/assets/menus/xbox/
 
 # The Xbox port's machine-local paths (tools/xbox_dev.py), and what nxdk's
 # make writes beside the sources

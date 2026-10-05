@@ -24,7 +24,7 @@ from typing import Any, Dict, List
 
 from .linux_build import (EXPAT_DIR, MUSL_MATH_DIR, TOML_DIR, XDK_INCLUDE, compile_launcher,
                           game_defines_and_includes, game_sources, musl_math_sources, xdk_headers)
-from .embed_assets import hud_asset_inputs
+from .embed_assets import xbox_menu_inputs
 from .ninja_syntax import Writer
 from .windows_build import EXPAT_SOURCES, inline_export_wrapper
 
@@ -253,14 +253,15 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
     for source in config.get("windows_platform_sources", []):
         add_object(Path(source), nxdk_cflags)
     # the menus' files (port/assets/menus; menu_files.c), without the
-    # high-res HUD and text the other ports embed beside them
+    # high-res HUD and text the other ports embed beside them, and with the
+    # Xbox's own copies of their pictures (tools/xbox_menu_art.py)
     menus = BUILD / "generated" / "menu_files_assets.c"
     n.rule(
         name="xbox_embed_menus",
-        command="$python tools/embed_assets.py --menus-only $out",
+        command="$python tools/embed_assets.py --menus-only --xbox $out",
         description="XBOX EMBED $out",
     )
-    n.build(outputs=menus, rule="xbox_embed_menus", implicit=[Path("tools/embed_assets.py"), *hud_asset_inputs()])
+    n.build(outputs=menus, rule="xbox_embed_menus", implicit=[Path("tools/embed_assets.py"), *xbox_menu_inputs()])
     add_object(menus, platform_cflags)
     # the settings file's parser (port_config.c)
     add_object(TOML_DIR / "tomlc17.c", " ".join([abi, "-std=gnu11", "-w", pdclib_includes]))

@@ -20,6 +20,10 @@ struct menu_file_embedded
 extern const struct menu_file_embedded menu_files_embedded[];
 extern const unsigned int menu_files_embedded_count;
 
+/* the PNG standing for a menu bitmap's D3D texture (data: its Data), and
+its size; NULL if it is none */
+const unsigned char *menu_art_png(unsigned long data, unsigned long *size);
+
 /* the GL texture standing for a menu bitmap's D3D texture (data: its Data),
 decoded from its PNG on first use, and its mip levels; 0 if it is none */
 unsigned int menu_art_texture(unsigned long data, unsigned long *levels);
