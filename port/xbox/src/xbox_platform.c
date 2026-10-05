@@ -8,13 +8,16 @@ have yet:
 - the high-res HUD and text (port/linux/src/hud_hires.c, text_hires.c),
   which the Xbox leaves out (port/xbox/README.md): no textures, no fonts;
 - internet play (port/linux/src/p2p*.c), the plan's fourth phase: off, so
-  the game plays on the LAN alone (p2p_sanitize.c is shared).
+  the game plays on the LAN alone (p2p_sanitize.c is shared), and the
+  Winsock layer (port/linux/src/xnet.c) finds no peers; the identifier an
+  XNADDR carries is the console's Ethernet address, as a retail Xbox's is.
 */
 
 #include "platform.h"
 #include "halo_ui_pointer.h"
 #include "hud_hires.h"
 #include "p2p.h"
+#include "nxdk_platform.h"
 #include "text_hires.h"
 
 #include <string.h>
@@ -232,4 +235,82 @@ void p2p_hardware_id(char *hex, int size)
 {
 	if (size > 0)
 		hex[0] = 0;
+}
+
+/* the Winsock layer's (xnet.c): no address is a peer's */
+
+void p2p_initialize(unsigned long local_address)
+{
+	(void)local_address;
+}
+
+const unsigned char *p2p_identifier(void)
+{
+	return xbox_net_ethernet_address();
+}
+
+int p2p_outgoing(int stream, int socket, unsigned long *address, unsigned short *port)
+{
+	(void)stream;
+	(void)socket;
+	(void)address;
+	(void)port;
+	return 0;
+}
+
+int p2p_incoming(int stream, unsigned long *address, unsigned short *port)
+{
+	(void)stream;
+	(void)address;
+	(void)port;
+	return 0;
+}
+
+int p2p_broadcast_targets(unsigned short port, unsigned long *addresses, unsigned short *ports, int maximum_count)
+{
+	(void)port;
+	(void)addresses;
+	(void)ports;
+	(void)maximum_count;
+	return 0;
+}
+
+int p2p_send_datagram(unsigned short source_port, unsigned long address, unsigned short port, const void *data,
+	int size)
+{
+	(void)source_port;
+	(void)address;
+	(void)port;
+	(void)data;
+	(void)size;
+	return 0;
+}
+
+int p2p_broadcast_datagram(unsigned short source_port, unsigned short port, const void *data, int size)
+{
+	(void)source_port;
+	(void)port;
+	(void)data;
+	(void)size;
+	return 0;
+}
+
+void p2p_socket_port(int socket, int stream, int listening, unsigned short port)
+{
+	(void)socket;
+	(void)stream;
+	(void)listening;
+	(void)port;
+}
+
+void p2p_port_taken(int stream, unsigned short port)
+{
+	(void)stream;
+	(void)port;
+}
+
+void p2p_socket_closed(int socket, unsigned short datagram_port)
+{
+	(void)socket;
+	(void)datagram_port;
 }

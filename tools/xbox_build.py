@@ -99,6 +99,29 @@ def _quote(path: Any) -> str:
     return f'"{text}"' if " " in text else text
 
 
+def lwip_sources(nxdk_lib: Path) -> List[Path]:
+    """lwIP's core, IPv4, IPv6, socket API and Ethernet units, as its
+    Filelists.mk lists them, and nxdk's driver and system layer for it (the
+    sources of nxdk's lib/net/Makefile, without its bridge and SLIP units)"""
+    lwip = nxdk_lib / "net" / "lwip" / "src"
+    lists: Dict[str, List[str]] = {}
+    name = None
+    for line in (lwip / "Filelists.mk").read_text().splitlines():
+        if "=" in line and not line.startswith((" ", "\t", "#")):
+            name, line = line.split("=", 1)
+            name = name.strip()
+            lists[name] = []
+        elif not line.startswith((" ", "\t")):
+            name = None
+        if name:
+            lists[name] += [word.replace("$(LWIPDIR)", str(lwip)) for word in line.replace("\\", " ").split()]
+    files = [*lists["COREFILES"], *lists["CORE4FILES"], *lists["CORE6FILES"], *lists["APIFILES"],
+             str(lwip / "netif" / "ethernet.c")]
+    files += [str(nxdk_lib / "net" / "nvnetdrv" / "nvnetdrv.c"), str(nxdk_lib / "net" / "nvnetdrv" / "nvnetdrv_lwip.c"),
+              str(nxdk_lib / "net" / "nforceif" / "src" / "sys_arch.c")]
+    return [Path(file) for file in files]
+
+
 def _local_tools() -> Dict[str, str]:
     """[tools] of port/xbox/xemu.local.toml (tools/xbox_dev.py), if present"""
     if not LOCAL_CONFIG.is_file():
@@ -246,8 +269,28 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
     ])
     for source in config.get("platform_sources", []):
         add_object(Path(source), platform_cflags)
+    # lwIP, with the Xbox build's options ahead of nxdk's
+    # (port/xbox/src/lwip_config/lwipopts.h: the loopback interface), and
+    # nxdk's Ethernet driver for it: built here, not nxdk's libnxdk_net.lib
+    lwip_cflags = " ".join([
+        nxdk_cflags, f"-I{PORT_DIR / 'src' / 'lwip_config'}",
+        f"-I{_quote(nxdk_lib / 'net' / 'lwip' / 'src' / 'include')}",
+        f"-I{_quote(nxdk_lib / 'net' / 'nforceif' / 'include')}", f"-I{_quote(nxdk_lib / 'net' / 'nvnetdrv')}",
+    ])
+
+    def add_nxdk_object(source: Path) -> None:
+        obj = obj_dir / "nxdk" / source.relative_to(nxdk_lib).with_suffix(".o")
+        objects.append(obj)
+        n.build(outputs=obj, rule="xbox_cc", inputs=source, implicit=[PORT_DIR / "src" / "lwip_config" / "lwipopts.h"],
+                variables={"cflags": f"{lwip_cflags} -w"})
+
+    for source in lwip_sources(nxdk_lib):
+        add_nxdk_object(source)
     for source in sorted((PORT_DIR / "src").glob("*.c")):
-        add_object(source, nxdk_cflags if source.name.startswith("nxdk_") else platform_cflags)
+        if source.name == "nxdk_net.c":
+            add_object(source, lwip_cflags)
+        else:
+            add_object(source, nxdk_cflags if source.name.startswith("nxdk_") else platform_cflags)
     for source in sorted((PORT_DIR / "common").glob("*.c")):
         add_object(source, nxdk_cflags)
     for source in config.get("windows_platform_sources", []):

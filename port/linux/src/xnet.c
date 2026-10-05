@@ -1193,6 +1193,15 @@ DWORD WSAAPI XNetGetTitleXnAddr(XNADDR *address)
 
 DWORD WSAAPI XNetGetEthernetLinkStatus(void)
 {
+#ifdef HALO_XBOX
+	/* the console's cable, as its own XNet has it: the address may come a
+	few seconds later (DHCP, or a link-local one; nxdk_net.c), and a host
+	reaches its own game through 127.0.0.1 meanwhile */
+	extern int xbox_net_link_up(void);
+
+	if (xbox_net_link_up())
+		return XNET_ETHERNET_LINK_ACTIVE | XNET_ETHERNET_LINK_100MBPS | XNET_ETHERNET_LINK_FULL_DUPLEX;
+#endif
 	return title_address() ?
 		(XNET_ETHERNET_LINK_ACTIVE | XNET_ETHERNET_LINK_100MBPS | XNET_ETHERNET_LINK_FULL_DUPLEX) : 0;
 }

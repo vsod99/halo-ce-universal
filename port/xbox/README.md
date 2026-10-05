@@ -64,11 +64,20 @@ pictures change.
 | `nxdk_gamepads.c` | The controllers through nxdk's USB host stack (started before the game takes its memory: its pool is contiguous); each port's latest report |
 | `xinput_xbox.c` | The SDK's `XInput*` over them (a report is an `XINPUT_GAMEPAD`), rumble; the menus' text fields on the game's on-screen keyboard (`platform_text_field_on_screen`) |
 | `xbox_platform.c` | The desktop's hooks as the Xbox answers them; no high-res HUD or text, no internet play yet |
+| `nxdk_net.c` | The sockets under Linux's Winsock layer (`port/linux/src/xnet.c`) over lwIP, which the build compiles with the loopback interface (`lwip_config/lwipopts.h`): nxdk's Ethernet driver (started before the game takes its memory), the address from DHCP or link-local in the background, XNet's link the cable's. A split screen game joins its own host through 127.0.0.1 |
 
 Threads, mutexes, condition variables and clocks are the Windows build's
 (`port/windows/src/win32_threads.c`, nxdk has those Windows calls); sound
-and the network null ones (`dsound_null.c`, `xnet_null.c`) until phases 3
-and 4, and the texture layout without OpenGL (`texture_layout.c`).
+a null one (`dsound_null.c`) until phase 3, and the texture layout without
+OpenGL (`texture_layout.c`). The game's own log (debug.txt, on
+the read-only D: here) goes to COM2 with the rest, its lines marked
+`debug.txt:`.
+
+`debug.start_map` (`--env HALO_START_MAP=b30`) starts a map the menus do not
+reach a few seconds into the main menu: a campaign level at normal, any
+other map (`bloodgulch`, `bloodgulch:ctf`) as a one-player split screen game.
+The map, and carousel, which a multiplayer lobby loads first, must be in
+`[game] maps`.
 
 ## The loop
 
