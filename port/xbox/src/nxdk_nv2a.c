@@ -97,16 +97,45 @@ unsigned long xbox_gpu_back_buffer(void)
 	return (unsigned long)pb_back_buffer() & 0x03ffffff;
 }
 
+/* where the GPU reads the push buffer next (physical); pbkit's channel 0 */
+static uint32_t gpu_get(void)
+{
+	return *(volatile uint32_t *)(VIDEO_BASE + 0x00800044) & 0x03ffffff;
+}
+
+/* until the GPU has read what lies from p to p+dwords (and the margin
+after it, for pbkit's own methods at the flips). Behind p it reads this
+lap, ahead of p what is left of the last one */
+static void gpu_wait_room(const uint32_t *p, unsigned long dwords)
+{
+	uint32_t start = (uint32_t)p & 0x03ffffff;
+	uint32_t end = start + (dwords + PUSH_BUFFER_MARGIN) * 4;
+	uint32_t get;
+
+	while ((get = gpu_get()) > start && get < end)
+		;
+}
+
 unsigned long *xbox_gpu_begin(unsigned long dwords)
 {
 	uint32_t *p = pb_begin();
 
-	/* past the end: back to the head, once the GPU has read up to here */
+	/* past the end: a jump back to the head, as pb_reset writes, without
+	its wait for the GPU to read up to it. It reads this lap here (at or
+	behind p), so the head is free once it is past the room asked for */
 	if (p + dwords + PUSH_BUFFER_MARGIN >= push_buffer_head + PUSH_BUFFER_BYTES / 4)
 	{
-		pb_reset();
+		uint32_t head = (uint32_t)push_buffer_head & 0x03ffffff;
+		uint32_t room_end = head + (dwords + PUSH_BUFFER_MARGIN) * 4;
+		uint32_t get;
+
+		while ((get = gpu_get()) >= head && get < room_end)
+			;
+		*p = head | 1;
+		pb_end(push_buffer_head);
 		p = pb_begin();
 	}
+	gpu_wait_room(p, dwords);
 	return (unsigned long *)p;
 }
 
