@@ -59,6 +59,7 @@ Called from the main loop every frame (main.c).
 #include "scenario/scenario.h"
 #include "tag_files/tag_files.h"
 #include "camera/observer.h"
+#include "hs/hs.h"
 
 #include "../src/p2p.h" /* port: port/linux/src/p2p.c, p2p_lobby.c */
 
@@ -132,6 +133,7 @@ static struct
 	real start_map_seconds;
 	boolean start_map_done;
 	boolean split_screen;
+	boolean start_commands_done;
 } network_test;
 
 /* the variant at the index of the list (copied to name), FALSE past its end */
@@ -787,6 +789,26 @@ void network_test_update(
 			network_test.start_map_done = TRUE;
 			platform_log("debug.start_map: %s", config_string("debug.start_map"));
 			pc_menu_start_map(config_string("debug.start_map"));
+		}
+	}
+	/* debug.start_commands: console commands, once a map has played two
+	seconds (init.txt's are done before any map) */
+	if (!network_test.start_commands_done && !main_menu_loaded && game_in_progress() &&
+		game_time_get() >= 2 * TICKS_PER_SECOND && *config_string("debug.start_commands"))
+	{
+		char const *command = config_string("debug.start_commands");
+
+		network_test.start_commands_done = TRUE;
+		while (*command)
+		{
+			char line[256];
+			size_t length = strcspn(command, ";");
+
+			snprintf(line, sizeof(line), "%.*s", (int)length, command);
+			platform_log("debug.start_commands: %s%s", line, hs_compile_and_evaluate(line) ? "" : " (failed)");
+			command += length;
+			if (*command == ';')
+				command++;
 		}
 	}
 	if (network_test.mode == _network_test_off)
