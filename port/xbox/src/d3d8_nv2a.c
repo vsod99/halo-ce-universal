@@ -178,6 +178,22 @@ vertex of the draw being traced is still to be logged */
 static unsigned long frame_number;
 static BOOL trace_immediate_pending;
 
+/* whether the frame being drawn goes to the log (debug.screenshot_every:
+screenshot_to_log), and the targets besides the screen it drew into,
+which go with it */
+#define SCREENSHOT_TARGETS 8
+static D3DSurface screenshot_targets[SCREENSHOT_TARGETS];
+static int screenshot_target_count;
+
+static BOOL screenshot_frame(void)
+{
+	static long every = -1;
+
+	if (every < 0)
+		every = config_integer("debug.screenshot_every");
+	return every > 0 && (frame_number + 1) % (unsigned long)every == 0;
+}
+
 static volatile unsigned int flip_count;
 static D3DCALLBACK vertical_blank_callback;
 static BOOL vertical_blank_thread_started;
@@ -581,6 +597,15 @@ void WINAPI D3DDevice_SetRenderTarget(D3DSurface *render_target, D3DSurface *dep
 {
 	if (render_target)
 		device.render_target = render_target;
+	if (render_target && render_target != &device.back_buffer && screenshot_frame())
+	{
+		int i;
+
+		for (i = 0; i < screenshot_target_count && screenshot_targets[i].Data != render_target->Data; i++)
+			;
+		if (i == screenshot_target_count && i < SCREENSHOT_TARGETS)
+			screenshot_targets[screenshot_target_count++] = *render_target;
+	}
 	device.depth_stencil = depth_stencil;
 	device.surface_dirty = TRUE;
 	/* as Direct3D, the viewport becomes the whole new target */
@@ -1840,32 +1865,69 @@ void xbox_log_write(const char *text);
 development loop saves as a PNG in its run's folder (tools/xbox_dev.py),
 as "screenshot FRAME WIDTH HEIGHT", a line of base64 RGB a row, each
 starting "~", and "screenshot end" (xemu downloads a surface the CPU
-reads, so the back buffer in memory is what the GPU drew) */
-static void screenshot_to_log(unsigned long frame)
+reads, so the back buffer in memory is what the GPU drew). The frame's
+other targets follow as "screenshot FRAME WIDTH HEIGHT ADDRESS" */
+static void screenshot_to_log(unsigned long frame, const D3DSurface *surface)
 {
 	static const char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 	static char line[1 + SCREEN_WIDTH * 4 + 2];
-	unsigned long width, height, pitch, x, y;
+	struct xgpu_texture_description description;
+	unsigned long width, height, pitch, x, y, bytes;
 	const BYTE *pixels;
 	char header[64];
 
-	xbox_gpu_screen(&width, &height, &pitch);
+	if (surface == &device.back_buffer)
+	{
+		xbox_gpu_screen(&width, &height, &pitch);
+		description.format = D3DFMT_LIN_A8R8G8B8;
+		description.linear = TRUE;
+		snprintf(header, sizeof(header), "screenshot %lu %lu %lu\n", frame, width, height);
+	}
+	else
+	{
+		xgpu_texture_describe(surface->Format, surface->Size, &description);
+		width = description.width;
+		height = description.height;
+		pitch = description.pitch;
+		snprintf(header, sizeof(header), "screenshot %lu %lu %lu %08lx\n", frame, width, height,
+			(unsigned long)surface->Data);
+	}
+	switch (description.format)
+	{
+	case D3DFMT_A8R8G8B8: case D3DFMT_LIN_A8R8G8B8: case D3DFMT_X8R8G8B8: case D3DFMT_LIN_X8R8G8B8:
+		bytes = 4;
+		break;
+	case D3DFMT_R5G6B5: case D3DFMT_LIN_R5G6B5:
+		bytes = 2;
+		break;
+	default:
+		return;
+	}
 	if (width > SCREEN_WIDTH)
 		return;
-	pixels = (const BYTE *)(device.back_buffer.Data | 0x80000000UL);
-	snprintf(header, sizeof(header), "screenshot %lu %lu %lu\n", frame, width, height);
+	pixels = (const BYTE *)((surface->Data & 0x03ffffff) | 0x80000000UL);
 	xbox_log_write(header);
 	for (y = 0; y < height; y++)
 	{
-		const BYTE *row = pixels + y * pitch;
 		char *out = line;
 
 		*out++ = '~';
 		/* a pixel's red, green and blue, three bytes, as four digits */
 		for (x = 0; x < width; x++)
 		{
-			DWORD value = (DWORD)row[x * 4 + 2] << 16 | (DWORD)row[x * 4 + 1] << 8 | row[x * 4];
+			const BYTE *texel = pixels + (description.linear ? y * pitch + x * bytes :
+				swizzle_offset(x, y, width, height) * bytes);
+			DWORD value;
 
+			if (bytes == 4)
+				value = (DWORD)texel[2] << 16 | (DWORD)texel[1] << 8 | texel[0];
+			else
+			{
+				DWORD texel16 = texel[0] | (DWORD)texel[1] << 8;
+
+				value = (texel16 >> 11 & 31) * 255 / 31 << 16 | (texel16 >> 5 & 63) * 255 / 63 << 8 |
+					(texel16 & 31) * 255 / 31;
+			}
 			*out++ = digits[value >> 18 & 63];
 			*out++ = digits[value >> 12 & 63];
 			*out++ = digits[value >> 6 & 63];
@@ -1890,16 +1952,15 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	(void)unused;
 	(void)unused2;
 	fence = fence_insert();
+	if (screenshot_frame())
 	{
-		static long screenshot_every = -1;
+		int i;
 
-		if (screenshot_every < 0)
-			screenshot_every = config_integer("debug.screenshot_every");
-		if (screenshot_every > 0 && (frame + 1) % (unsigned long)screenshot_every == 0)
-		{
-			fence_wait(fence);
-			screenshot_to_log(frame + 1);
-		}
+		fence_wait(fence);
+		screenshot_to_log(frame + 1, &device.back_buffer);
+		for (i = 0; i < screenshot_target_count; i++)
+			screenshot_to_log(frame + 1, &screenshot_targets[i]);
+		screenshot_target_count = 0;
 	}
 	xbox_gpu_present();
 	/* the GPU draws this frame while the CPU makes the next; the one

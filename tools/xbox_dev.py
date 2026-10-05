@@ -402,8 +402,10 @@ class LogScreenshots:
         """whether the line was part of a frame (and so not the log's)"""
         if line.startswith("screenshot ") and line != "screenshot end":
             parts = line.split()
-            if len(parts) == 4 and all(part.isdigit() for part in parts[1:]):
-                self.header = tuple(int(part) for part in parts[1:])
+            # a target besides the screen carries its address: frame-FRAME-ADDRESS.png
+            if len(parts) in (4, 5) and all(part.isdigit() for part in parts[1:4]):
+                name = parts[1] + ("-" + parts[4] if len(parts) == 5 else "")
+                self.header = (name, int(parts[2]), int(parts[3]))
                 self.rows = []
                 return True
         if self.header is None:
@@ -525,10 +527,12 @@ def main() -> None:
                             help="save xemu's window as shot-SECONDS.png in the run's folder; repeatable")
     run_parser.add_argument("--input", action="append", default=[], metavar="SECONDS:BUTTON,...",
                             help="press buttons from inside the game (debug.test_input \"press:\"), timed from "
-                                 "its first controller read; needs no access to the Mac's screen; repeatable")
+                                 "its first controller read; needs no access to the Mac's screen; rup, rdown, "
+                                 "rleft and rright turn the view; BUTTON*SECONDS holds it that long; repeatable")
     run_parser.add_argument("--frames", type=int, default=0, metavar="N",
                             help="the game writes every Nth frame to the log, saved as frame-N.png "
-                                 "(debug.screenshot_every)")
+                                 "(debug.screenshot_every), and the targets besides the screen it drew into "
+                                 "as frame-N-ADDRESS.png")
     run_parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
                             help="an environment variable for the run, such as HALO_GPU_TRACE=1500 "
                                  "(D:\\environment.txt); repeatable")
