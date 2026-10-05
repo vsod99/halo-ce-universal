@@ -1,5 +1,5 @@
 {
-  "comment": "Original Xbox build inputs (tools/xbox_build.py). The game's sources, defines and include directories are the Linux build's (port/linux/port.json); this lists the other ports' platform units the Xbox shares, and the Windows ones it compiles against nxdk's Windows API. See port/xbox/README.md. include_symbols are linked in by name: nxdk's automount of D: to the XBE's folder.",
+  "comment": "Original Xbox build inputs (tools/xbox_build.py). The game's sources, defines and include directories are the Linux build's (port/linux/port.json); this lists the other ports' platform units the Xbox shares (Linux's Winsock layer over port/xbox/src/nxdk_net.c's lwIP sockets), and the Windows ones it compiles against nxdk's Windows API. See port/xbox/README.md. include_symbols are linked in by name: nxdk's automount of D: to the XBE's folder.",
   "platform_sources": [
     "port/linux/src/bink_null.c",
     "port/linux/src/d3d8_resources.c",
@@ -13,7 +13,8 @@
     "port/linux/src/xbdm.c",
     "port/linux/src/xbox_files.c",
     "port/linux/src/xbox_kernel.c",
-    "port/linux/src/xbox_xapi.c"
+    "port/linux/src/xbox_xapi.c",
+    "port/linux/src/xnet.c"
   ],
   "windows_platform_sources": [
     "port/windows/src/win32_threads.c"

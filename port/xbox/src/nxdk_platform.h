@@ -26,6 +26,12 @@ sent; false if there is none */
 int xbox_gamepad_report(int port, unsigned char report[XBOX_GAMEPAD_REPORT_SIZE], unsigned long *reports);
 void xbox_gamepad_rumble(int port, unsigned short left, unsigned short right);
 
+/* the network (nxdk_net.c): the Ethernet address, 6 bytes (zeros with no
+Ethernet), which XNet's XNADDR carries (p2p_none.c) */
+const unsigned char *xbox_net_ethernet_address(void);
+/* whether the cable is plugged in (XNet's link status: port/linux/src/xnet.c) */
+int xbox_net_link_up(void);
+
 /* the GPU through pbkit (nxdk_nv2a.c, for d3d8_nv2a.c) */
 /* context DMAs over all of the low 64 MB for the color and depth buffers */
 #define XBOX_GPU_DMA_COLOR 18
