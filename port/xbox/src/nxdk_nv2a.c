@@ -30,6 +30,8 @@ after them.
 #define PUSH_BUFFER_BYTES (2UL * 1024 * 1024)
 /* left free at the end for pbkit's jump back to the head */
 #define PUSH_BUFFER_MARGIN 64
+/* the GPU is told of new methods once this many bytes are written */
+#define KICK_BYTES (16UL * 1024)
 
 static BOOL gpu_ready;
 static uint32_t *push_buffer_head;
@@ -103,6 +105,21 @@ static uint32_t gpu_get(void)
 	return *(volatile uint32_t *)(VIDEO_BASE + 0x00800044) & 0x03ffffff;
 }
 
+/* the end of what the device wrote, and of what the GPU was told of: as
+the SDK's Direct3D, the GPU hears of new methods now and then (each telling
+is a cache flush and register accesses), not at each block */
+static uint32_t *write_end, *kicked_end;
+
+/* the GPU told of all written, before a wait on it or pbkit's own methods */
+void xbox_gpu_kick(void)
+{
+	if (write_end != kicked_end)
+	{
+		pb_end(write_end);
+		kicked_end = write_end;
+	}
+}
+
 /* until the GPU has read what lies from p to p+dwords (and the margin
 after it, for pbkit's own methods at the flips). Behind p it reads this
 lap, ahead of p what is left of the last one */
@@ -118,8 +135,11 @@ static void gpu_wait_room(const uint32_t *p, unsigned long dwords)
 
 unsigned long *xbox_gpu_begin(unsigned long dwords)
 {
-	uint32_t *p = pb_begin();
+	uint32_t *p;
 
+	if (!write_end)
+		write_end = kicked_end = pb_begin();
+	p = write_end;
 	/* past the end: a jump back to the head, as pb_reset writes, without
 	its wait for the GPU to read up to it. It reads this lap here (at or
 	behind p), so the head is free once it is past the room asked for */
@@ -129,11 +149,12 @@ unsigned long *xbox_gpu_begin(unsigned long dwords)
 		uint32_t room_end = head + (dwords + PUSH_BUFFER_MARGIN) * 4;
 		uint32_t get;
 
+		xbox_gpu_kick();
 		while ((get = gpu_get()) >= head && get < room_end)
 			;
 		*p = head | 1;
 		pb_end(push_buffer_head);
-		p = pb_begin();
+		p = write_end = kicked_end = push_buffer_head;
 	}
 	gpu_wait_room(p, dwords);
 	return (unsigned long *)p;
@@ -141,16 +162,20 @@ unsigned long *xbox_gpu_begin(unsigned long dwords)
 
 void xbox_gpu_end(unsigned long *end)
 {
-	pb_end((uint32_t *)end);
+	write_end = (uint32_t *)end;
+	if ((unsigned long)(write_end - kicked_end) * 4 >= KICK_BYTES)
+		xbox_gpu_kick();
 }
 
 int xbox_gpu_busy(void)
 {
+	xbox_gpu_kick();
 	return pb_busy();
 }
 
 void xbox_gpu_wait_idle(void)
 {
+	xbox_gpu_kick();
 	while (pb_busy())
 		;
 }
@@ -162,6 +187,8 @@ unsigned long xbox_gpu_fence(void)
 
 void xbox_gpu_wait_fence(unsigned long fence)
 {
+	if ((long)(xbox_gpu_fence() - fence) < 0)
+		xbox_gpu_kick();
 	while ((long)(xbox_gpu_fence() - fence) < 0)
 		NtYieldExecution();
 }
@@ -169,9 +196,11 @@ void xbox_gpu_wait_fence(unsigned long fence)
 void xbox_gpu_present(void)
 {
 	/* the back buffer is shown at the next vertical blank; pbkit then
-	draws into the next of its three */
+	draws into the next of its three, its methods after the device's */
+	xbox_gpu_kick();
 	while (pb_finished())
 		NtYieldExecution();
+	write_end = kicked_end = pb_begin();
 }
 
 unsigned long xbox_gpu_wait_vertical_blank(void)
