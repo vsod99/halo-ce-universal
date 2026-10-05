@@ -54,6 +54,9 @@ unsigned long xbox_gpu_back_buffer(void);
 of what was written goes to xbox_gpu_end, which sends it to the GPU */
 unsigned long *xbox_gpu_begin(unsigned long dwords);
 void xbox_gpu_end(unsigned long *end);
+/* the GPU told of everything written (xbox_gpu_end does so only now and
+then), before polling for what it writes back */
+void xbox_gpu_kick(void);
 int xbox_gpu_busy(void);
 void xbox_gpu_wait_idle(void);
 /* the count the GPU last wrote at XBOX_GPU_FENCE_OFFSET, and a wait,

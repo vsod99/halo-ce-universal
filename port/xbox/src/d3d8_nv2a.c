@@ -687,7 +687,10 @@ static BOOL fence_passed(DWORD fence)
 		return !xbox_gpu_busy();
 	if ((LONG)(fence - fence_inserted) > 0)
 		fence_insert();
-	return (LONG)(xbox_gpu_fence() - fence) >= 0;
+	if ((LONG)(xbox_gpu_fence() - fence) >= 0)
+		return TRUE;
+	xbox_gpu_kick();
+	return FALSE;
 }
 
 static void fence_wait(DWORD fence)
@@ -814,7 +817,10 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 	/* with no reports, everything is visible */
 	count = reports ? reports[index * 4 + 2] : 0x7fffffff;
 	if (count == VISIBILITY_TEST_PENDING)
+	{
+		xbox_gpu_kick();
 		return D3DERR_TESTINCOMPLETE;
+	}
 	if (time_stamp)
 		*time_stamp = reports ? reports[index * 4] | ((ULONGLONG)reports[index * 4 + 1] << 32) : 0;
 	if (result)
