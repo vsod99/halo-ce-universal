@@ -643,25 +643,63 @@ void WINAPI D3DDevice_InsertCallback(D3DCALLBACKTYPE type, D3DCALLBACK callback,
 	}
 }
 
-/* ---------- visibility (occlusion) tests: not yet, nothing visible */
+/* ---------- visibility (occlusion) tests
+
+The GPU counts the pixels that pass the depth and stencil tests between
+Begin and End, and writes the count into the reports' memory (16 bytes an
+index: nxdk_nv2a.c). Until it has, the count holds a value no count has. */
+
+#define VISIBILITY_TEST_PENDING 0xffffffffUL
 
 void WINAPI D3DDevice_BeginVisibilityTest(void)
 {
+	DWORD *p;
+
+	if (!xbox_gpu_reports())
+		return;
+	p = push_begin(6);
+	PUSH1(p, NV097_SET_CONTEXT_DMA_REPORT, XBOX_GPU_DMA_REPORT);
+	PUSH1(p, NV097_CLEAR_REPORT_VALUE, NV097_CLEAR_REPORT_VALUE_TYPE_ZPASS_PIXEL_CNT);
+	PUSH1(p, NV097_SET_ZPASS_PIXEL_COUNT_ENABLE, 1);
+	push_end(p);
 }
 
 HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 {
-	(void)index;
+	volatile unsigned long *reports = xbox_gpu_reports();
+	DWORD *p;
+
+	if (index >= XBOX_GPU_REPORT_BYTES / 16)
+		return E_INVALIDARG;
+	if (!reports)
+		return S_OK;
+	reports[index * 4 + 2] = VISIBILITY_TEST_PENDING;
+	p = push_begin(6);
+	PUSH1(p, NV097_SET_ZPASS_PIXEL_COUNT_ENABLE, 0);
+	PUSH1(p, NV097_GET_REPORT, (NV097_GET_REPORT_TYPE_ZPASS_PIXEL_CNT << 24) | (index * 16));
+	/* xemu writes its pending reports when the report DMA is set (its
+	pgraph's SET_CONTEXT_DMA_REPORT); the same one again changes nothing
+	on the console */
+	PUSH1(p, NV097_SET_CONTEXT_DMA_REPORT, XBOX_GPU_DMA_REPORT);
+	push_end(p);
 	return S_OK;
 }
 
 HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULONGLONG *time_stamp)
 {
-	(void)index;
+	volatile unsigned long *reports = xbox_gpu_reports();
+	unsigned long count;
+
+	if (index >= XBOX_GPU_REPORT_BYTES / 16)
+		return E_INVALIDARG;
+	/* with no reports, everything is visible */
+	count = reports ? reports[index * 4 + 2] : 0x7fffffff;
+	if (count == VISIBILITY_TEST_PENDING)
+		return D3DERR_TESTINCOMPLETE;
 	if (time_stamp)
-		*time_stamp = 0;
+		*time_stamp = reports ? reports[index * 4] | ((ULONGLONG)reports[index * 4 + 1] << 32) : 0;
 	if (result)
-		*result = 0;
+		*result = count;
 	return S_OK;
 }
 

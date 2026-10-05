@@ -14,7 +14,8 @@ otherwise use up (port/xbox/README.md).
 pbkit's own context DMAs for the color and depth buffers start at its
 buffers. The device draws into the game's surfaces wherever they are, so
 it binds two more over all of the low 64 MB (XBOX_GPU_DMA_COLOR and
-_ZETA), as pbkit's texture and vertex ones already are.
+_ZETA), as pbkit's texture and vertex ones already are. A third
+(XBOX_GPU_DMA_REPORT) is the visibility tests' reports.
 */
 
 #include <hal/video.h>
@@ -31,7 +32,8 @@ _ZETA), as pbkit's texture and vertex ones already are.
 
 static BOOL gpu_ready;
 static uint32_t *push_buffer_head;
-static struct s_CtxDma color_dma, zeta_dma;
+static struct s_CtxDma color_dma, zeta_dma, report_dma;
+static volatile unsigned long *reports;
 
 __attribute__((constructor)) static void gpu_start(void)
 {
@@ -54,6 +56,15 @@ __attribute__((constructor)) static void gpu_start(void)
 	pb_create_dma_ctx(XBOX_GPU_DMA_ZETA, DMA_CLASS_3D, 0, MAXRAM, &zeta_dma);
 	pb_bind_channel(&color_dma);
 	pb_bind_channel(&zeta_dma);
+	/* uncached: the CPU reads what the GPU writes */
+	reports = MmAllocateContiguousMemoryEx(XBOX_GPU_REPORT_BYTES, 0, 0x03ffffff, 4096,
+		PAGE_READWRITE | PAGE_NOCACHE);
+	if (reports)
+	{
+		pb_create_dma_ctx(XBOX_GPU_DMA_REPORT, DMA_CLASS_3D, (DWORD)reports, XBOX_GPU_REPORT_BYTES - 1,
+			&report_dma);
+		pb_bind_channel(&report_dma);
+	}
 	/* the push buffer's head, where pbkit jumps back to */
 	pb_reset();
 	push_buffer_head = pb_begin();
@@ -72,6 +83,11 @@ void xbox_gpu_screen(unsigned long *width, unsigned long *height, unsigned long 
 	*width = pb_back_buffer_width();
 	*height = pb_back_buffer_height();
 	*pitch = pb_back_buffer_pitch();
+}
+
+volatile unsigned long *xbox_gpu_reports(void)
+{
+	return reports;
 }
 
 unsigned long xbox_gpu_back_buffer(void)

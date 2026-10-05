@@ -30,9 +30,15 @@ void xbox_gamepad_rumble(int port, unsigned short left, unsigned short right);
 /* context DMAs over all of the low 64 MB for the color and depth buffers */
 #define XBOX_GPU_DMA_COLOR 18
 #define XBOX_GPU_DMA_ZETA 19
+/* and over the visibility tests' reports: 16 bytes each (a time stamp,
+the pixel count, a word the GPU zeroes), for indices 0 to 0xfff */
+#define XBOX_GPU_DMA_REPORT 20
+#define XBOX_GPU_REPORT_BYTES (4096UL * 16)
 /* whether pbkit started (with the video mode) */
 int xbox_gpu_ready(void);
 void xbox_gpu_screen(unsigned long *width, unsigned long *height, unsigned long *pitch);
+/* the reports' memory, or NULL */
+volatile unsigned long *xbox_gpu_reports(void);
 /* the physical address of the buffer the next frame is drawn into */
 unsigned long xbox_gpu_back_buffer(void);
 /* room for that many words of methods at the returned address; the end
