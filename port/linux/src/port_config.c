@@ -540,6 +540,9 @@ static const struct config_setting config_settings[] =
 		"at normal difficulty, as the campaign's menus would, any other\n"
 		"(\"bloodgulch\", \"bloodgulch:ctf\") as a one-player split screen game of\n"
 		"slayer or the variant; empty for none." },
+	{ "debug.start_commands", _config_string, "\"\"", "HALO_START_COMMANDS", _environment_value, _platform_all,
+		"Console commands, \";\" between them, that the game does once a map has\n"
+		"played two seconds, such as \"cheat_active_camouflage\"; empty for none." },
 	{ "debug.gpu_flush_draws", _config_integer, "-1", "HALO_GPU_FLUSH_DRAWS", _environment_value, _platform_desktop,
 		"Flush the GPU's pipeline every this many draws: -1 for every 3 on Intel\n"
 		"graphics with Mesa's driver (which can hang without), 0 never." },
