@@ -1781,7 +1781,7 @@ boolean actor_action_handle_active_cover_seeking(
 {
 	struct actor_datum *actor = actor_get(actor_index);
 	struct actor_debug_info *debug_info =
-		&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+		&actor_debug_array[ACTOR_DEBUG_INDEX(actor_index)];
 	struct actor_definition *definition =
 		actor_definition_get(actor->meta.definition_index);
 	boolean result = FALSE;
@@ -2071,7 +2071,7 @@ boolean actor_action_test_grenade(
 		actor_variant_definition_get(actor->meta.variant_definition_index);
 	long current_time = game_time_get();
 	struct actor_debug_info *debug_info =
-		&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+		&actor_debug_array[ACTOR_DEBUG_INDEX(actor_index)];
 
 	debug_info->grenade_eval_time = current_time;
 
@@ -3501,7 +3501,7 @@ boolean actor_action_try_to_dive(
 {
 	struct actor_datum *actor = actor_get(actor_index);
 	struct actor_debug_info *debug_info =
-		&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+		&actor_debug_array[ACTOR_DEBUG_INDEX(actor_index)];
 	boolean dive_off_ledge = FALSE;
 	byte collision_result[0x1C];
 	real_vector2d evade_vector;
@@ -4435,7 +4435,7 @@ boolean actor_action_handle_danger_avoidance(
 {
 	struct actor_datum *actor = actor_get(actor_index);
 	struct actor_debug_info *debug_info =
-		&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+		&actor_debug_array[ACTOR_DEBUG_INDEX(actor_index)];
 	boolean result = FALSE;
 	boolean within_escape_radius = FALSE;
 	boolean path_re_enters_danger = FALSE;
