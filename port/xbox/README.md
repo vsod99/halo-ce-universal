@@ -65,7 +65,7 @@ pictures change.
 | `xinput_xbox.c` | The SDK's `XInput*` over them (a report is an `XINPUT_GAMEPAD`), rumble; the menus' text fields on the game's on-screen keyboard (`platform_text_field_on_screen`) |
 | `xbox_platform.c` | The desktop's hooks as the Xbox answers them; no high-res HUD or text, no internet play yet |
 | `nxdk_audio.c` | The sound output for Linux's DirectSound mixer (`port/linux/src/dsound_sdl.c`): 48 kHz stereo through the AC'97 controller, a thread above the game's keeping about 64 ms of its descriptors mixed ahead (the ring set aside before the game takes its memory); the log has the mixing's share of the processor every 30 s. The APU is not used yet |
-| `nxdk_net.c` | The sockets under Linux's Winsock layer (`port/linux/src/xnet.c`) over lwIP, which the build compiles with the loopback interface (`lwip_config/lwipopts.h`): nxdk's Ethernet driver (started before the game takes its memory), the address from DHCP or link-local in the background, XNet's link the cable's. A split screen game joins its own host through 127.0.0.1 |
+| `nxdk_net.c` | The sockets under Linux's Winsock layer (`port/linux/src/xnet.c`) over lwIP, which the build compiles with the loopback interface (`lwip_config/lwipopts.h`): nxdk's Ethernet driver (started before the game takes its memory), the address from DHCP or a link-local one in the background (claimed once the first DHCP request goes unanswered, there 7-8 s after start-up; logged when it comes), XNet's link the cable's and its address pending until then (the game's transport waits up to 10 s for it, as with the console's own XNet). A split screen game joins its own host through 127.0.0.1 |
 
 Threads, mutexes, condition variables and clocks are the Windows build's
 (`port/windows/src/win32_threads.c`, nxdk has those Windows calls), and the
@@ -138,6 +138,30 @@ macOS's Screen Recording permission). `--wav` records the sound card as
 `sound.wav` there instead of playing it (xemu's `-audio driver=wav`;
 xemu writes it at 44.1 kHz). On the console, pictures of frames
 will come from the program over the network.
+
+### System link between two Xboxes
+
+    python3 tools/xbox_dev.py link bloodgulch
+    python3 tools/xbox_dev.py link bloodgulch --env HALO_NETWORK_TEST_SHOOT=2 \
+        --host-env HALO_NETWORK_TEST_KILL=20 --host-env HALO_NETWORK_TEST_VEHICLE=40
+
+boots two xemus: one hosting the map as a system link game
+(`debug.network_test host:MAP[:VARIANT]`, started 15 s after hosting:
+`HALO_NETWORK_TEST_START`), the other joining the first game it finds
+(`debug.network_test join`); `--env` is for both, `--host-env` and
+`--join-env` for one. Their network cards are joined by a cable through
+the runner: each xemu's UDP backend sends its Ethernet frames to the
+runner, which passes them to the other and saves them as `cable.pcap`
+(Wireshark, `tcpdump -r`), with a count of each machine's frames by
+protocol and port at the end. There is no DHCP server on the cable, so the
+machines take link-local addresses (169.254.x.x) as two consoles and a
+cable do. Each machine gets an APFS clone of the hard disk (xemu locks the
+image) and an EEPROM copy with its own Ethernet address (the factory
+section's checksum made again). The logs come prefixed `[host]` and
+`[join]`, and are saved in `build/xbox/runs/<time>/{host,join}`.
+
+The network tests' tick lines show each machine's view of every player
+(position, health, weapons, score, kills and deaths), to compare.
 
 ## Programs
 
