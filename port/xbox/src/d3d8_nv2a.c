@@ -64,6 +64,28 @@ void halo_screen_ui_offset(unsigned char centered)
 	(void)centered;
 }
 
+/* ---------- the GL renderer's own passes (port/linux/src/d3d8_gl.c): the
+Xbox's shadow maps at its own size, no antialiasing pass after the 3D view,
+and its vertex shaders lit as written */
+
+long halo_shadow_map_scale(void)
+{
+	return 1;
+}
+
+void halo_screen_anti_alias(short x0, short y0, short x1, short y1)
+{
+	(void)x0;
+	(void)y0;
+	(void)x1;
+	(void)y1;
+}
+
+void halo_vertex_shader_lighting(unsigned long handle)
+{
+	(void)handle;
+}
+
 /* ---------- state the XDK header's inline functions read and write */
 
 DWORD D3D__RenderState[D3DRS_MAX];

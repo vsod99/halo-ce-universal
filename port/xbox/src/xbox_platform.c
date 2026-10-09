@@ -10,7 +10,10 @@ have yet:
 - internet play (port/linux/src/p2p*.c), the plan's fourth phase: off, so
   the game plays on the LAN alone (p2p_sanitize.c is shared), and the
   Winsock layer (port/linux/src/xnet.c) finds no peers; the identifier an
-  XNADDR carries is the console's Ethernet address, as a retail Xbox's is.
+  XNADDR carries is the console's Ethernet address, as a retail Xbox's is;
+- voice chat (port/linux/src/voice_audio.c): no microphone, and no voices;
+- Halo Custom Edition maps (port/linux/src/xbox_memory.c's tag cache for
+  them): none, so the game plays the Xbox's own maps alone.
 */
 
 #include "platform.h"
@@ -19,6 +22,7 @@ have yet:
 #include "p2p.h"
 #include "nxdk_platform.h"
 #include "text_hires.h"
+#include "voice_audio.h"
 
 #include <string.h>
 
@@ -76,6 +80,127 @@ int halo_ui_pointer_update(int menus_active, struct halo_ui_pointer *pointer)
 	(void)menus_active;
 	(void)pointer;
 	return 0;
+}
+
+int halo_scoreboard_pointer_update(int offered, struct halo_ui_pointer *pointer)
+{
+	(void)offered;
+	(void)pointer;
+	return 0;
+}
+
+/* the menus' choices of a desktop's displays, windows and sound devices:
+none (port/linux/game/menu_tags.c) */
+int platform_display_resolutions(long *widths, long *heights, int maximum)
+{
+	(void)widths;
+	(void)heights;
+	(void)maximum;
+	return 0;
+}
+
+int platform_window_sizes(long *widths, long *heights, int maximum)
+{
+	(void)widths;
+	(void)heights;
+	(void)maximum;
+	return 0;
+}
+
+int platform_audio_devices(int recording, char (*names)[128], int maximum)
+{
+	(void)recording;
+	(void)names;
+	(void)maximum;
+	return 0;
+}
+
+/* ---------- Halo Custom Edition maps: none */
+
+void *halo_custom_edition_tag_cache(void)
+{
+	return NULL;
+}
+
+void halo_custom_edition_texels_channels(const void *texels, unsigned char channel_order)
+{
+	(void)texels;
+	(void)channel_order;
+}
+
+void halo_custom_edition_texels_forget(void)
+{
+}
+
+/* ---------- voice chat: no microphone, and no voices */
+
+int halo_push_to_talk_held(void)
+{
+	return 0;
+}
+
+int voice_audio_microphone(int open)
+{
+	(void)open;
+	return 0;
+}
+
+int voice_audio_read_frame(float *frame)
+{
+	(void)frame;
+	return 0;
+}
+
+float voice_audio_level(const float *frame)
+{
+	(void)frame;
+	return 0.0f;
+}
+
+int voice_audio_encode(const float *frame, int bitrate, unsigned char *packet, int maximum)
+{
+	(void)frame;
+	(void)bitrate;
+	(void)packet;
+	(void)maximum;
+	return 0;
+}
+
+void voice_audio_play(int speaker, unsigned short sequence, const unsigned char *packet, int length, float gain,
+	float pan)
+{
+	(void)speaker;
+	(void)sequence;
+	(void)packet;
+	(void)length;
+	(void)gain;
+	(void)pan;
+}
+
+void voice_audio_forget(int speaker)
+{
+	(void)speaker;
+}
+
+void voice_audio_forget_all(void)
+{
+}
+
+int voice_audio_speaking(int speaker)
+{
+	(void)speaker;
+	return 0;
+}
+
+void voice_audio_set_volume(float volume)
+{
+	(void)volume;
+}
+
+void voice_audio_mix(float *output, unsigned long frames)
+{
+	(void)output;
+	(void)frames;
 }
 
 /* ---------- the high-res HUD and text: left out */
@@ -162,6 +287,18 @@ int p2p_peer_address(const unsigned char *identifier, unsigned long *address)
 unsigned long p2p_peer_endpoint_address(unsigned long virtual_address)
 {
 	(void)virtual_address;
+	return 0;
+}
+
+void p2p_set_hosting_password(const char *password)
+{
+	(void)password;
+}
+
+int p2p_listing_unlock(struct p2p_listing *listing, const char *password)
+{
+	(void)listing;
+	(void)password;
 	return 0;
 }
 
