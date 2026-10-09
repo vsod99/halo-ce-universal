@@ -189,6 +189,22 @@ brokers and STUN are the public ones and the machines find each other but
 cannot connect. UPnP is off unless `--upnp`: the machines would ask the
 Mac's network's router to forward ports to xemu's address.
 
+### Joining someone's game over the internet
+
+    python3 tools/xbox_dev.py run build/xbox/halo --router-forward \
+        --env HALO_COMMAND_LINE=halo://join/<the host's 64 hex digits> --env HALO_NETWORK_TEST=join
+
+The invite is the Xbox's command line; `join` picks the host's game once
+it is in the system link list (or leave it out and pick it in xemu). Two
+NATs that map each destination to its own port never connect (a carrier's
+NAT and many home routers do), so `--router-forward` makes the Xbox a
+console whose router forwards it a port: the runner asks the Mac's
+network's router (UPnP) to forward a UDP port to the Mac for the run, xemu
+forwards it to the Xbox's tunnel port, and the runner is the Xbox's only
+STUN server, telling it the router's address and that port are its own.
+The forwarding is removed at the end. The host's map must be in `[game]
+maps`.
+
 ## Programs
 
 | Folder | What it finds out |
