@@ -18,7 +18,8 @@ are removed. A router whose own internet address is a private one (behind
 another NAT, such as a carrier's) cannot help, and is not asked.
 
 Built with the host's ABI, as the other posix_*.c (and, on Windows, with
-the Windows SDK: port/windows/src/win32_upnp.c). One thread calls these at a
+the Windows SDK: port/windows/src/win32_upnp.c; on the Xbox, with lwIP:
+port/xbox/src/nxdk_upnp.c). One thread calls these at a
 time.
 */
 
@@ -195,9 +196,10 @@ int posix_upnp_forward_udp(unsigned short port, unsigned short preferred_port, p
 	int attempt;
 	int result = 0;
 
-#ifndef _WIN32
+#if !defined(_WIN32) && defined(SIGPIPE)
 	/* miniupnpc writes to its connections without MSG_NOSIGNAL: a router
-	that closes one as it is written to must not end the game */
+	that closes one as it is written to must not end the game (the Xbox's
+	lwIP has no such signal) */
 	signal(SIGPIPE, SIG_IGN);
 #endif
 	if (!upnp_find_router(error, error_size))

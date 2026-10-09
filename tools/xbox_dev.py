@@ -8,6 +8,9 @@
     python tools/xbox_dev.py link MAP        two xemus, linked: the game hosting MAP
                                              as a system link game and the game
                                              joining it (debug.network_test)
+    python tools/xbox_dev.py link MAP --internet
+                                             the same over the internet: each on
+                                             its own NAT, joining by the invite
 
 The machine's paths live in port/xbox/xemu.local.toml (not committed; the
 template is port/xbox/xemu.example.toml): nxdk, xemu, and the console files
@@ -33,6 +36,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -525,8 +529,62 @@ class Cable:
             print(f"cable: {name} sent {sum(counts.values())} frames: {summary or 'none'}")
 
 
+class ForwardedPort:
+    """the host's router in an internet link that forwards its tunnel port
+    (network.tunnel_port), as a player would set up for a NAT that stops
+    connections: xemu's NAT forwards a port of the Mac to the host's tunnel
+    port, and this STUN server, the host's only one, tells it that its
+    internet address is that port of 10.0.2.2, which the joining machine's
+    xemu NAT takes to the Mac (127.0.0.1)"""
+    TUNNEL_PORT = 2310
+
+    def __init__(self):
+        self.mac_port = free_udp_port()
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind(("127.0.0.1", 0))
+        self.socket.settimeout(0.5)
+        self.running = True
+        self.answered = 0
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    def environment(self) -> list:
+        return [f"HALO_NET_TUNNEL_PORT={self.TUNNEL_PORT}", f"HALO_NET_STUN=10.0.2.2:{self.socket.getsockname()[1]}"]
+
+    def net(self) -> list:
+        return ["backend = 'nat'", "", "[net.nat]",
+                f"forward_ports = [{{ host = {self.mac_port}, guest = {self.TUNNEL_PORT}, protocol = 'udp' }}]"]
+
+    def serve(self) -> None:
+        """answers STUN binding requests (RFC 5389) with 10.0.2.2:mac_port
+        as the XOR-MAPPED-ADDRESS"""
+        cookie = 0x2112A442
+        while self.running:
+            try:
+                request, source = self.socket.recvfrom(2048)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            if len(request) < 20 or request[:2] != b"\x00\x01":
+                continue
+            address = bytes([10, 0, 2, 2])
+            value = (b"\x00\x01" + (self.mac_port ^ cookie >> 16).to_bytes(2, "big") +
+                     (int.from_bytes(address, "big") ^ cookie).to_bytes(4, "big"))
+            attribute = (0x0020).to_bytes(2, "big") + len(value).to_bytes(2, "big") + value
+            self.socket.sendto(b"\x01\x01" + len(attribute).to_bytes(2, "big") + request[4:20] + attribute, source)
+            self.answered += 1
+
+    def close(self) -> None:
+        self.running = False
+        self.thread.join()
+        self.socket.close()
+        print(f"router: forwarded the Mac's UDP port {self.mac_port} to the host's {self.TUNNEL_PORT}; "
+              f"answered {self.answered} STUN requests")
+
+
 def link(config: dict, timeout: float, host_environment: list, join_environment: list, environment: list,
-         headless: bool) -> int:
+         headless: bool, internet: bool = False, forward: bool = False, upnp: bool = False) -> int:
     """two Xboxes and a cable: the game hosting a system link game
     (debug.network_test host:MAP) and the game joining it, in two xemus
     whose network cards send each other their frames over UDP on this Mac,
@@ -534,46 +592,82 @@ def link(config: dict, timeout: float, host_environment: list, join_environment:
     their link-local addresses). Each has its own clone of
     the hard disk (xemu locks the image) and its own Ethernet address (an
     EEPROM copy); the logs, prefixed, until both print the done marker or
-    the timeout. The runs are in build/xbox/runs/TIME/{host,join}."""
+    the timeout. The runs are in build/xbox/runs/TIME/{host,join}.
+
+    With internet, no cable: each machine is on its own xemu NAT (the Mac's
+    internet), and the joining one starts once the host logs its invite,
+    with that as its command line (HALO_COMMAND_LINE): internet play's
+    signalling, STUN and tunnel, as two players' homes. xemu's NAT gives
+    each destination its own port, which two machines cannot get through
+    (p2p.c), so forward has the host's router forward its port
+    (ForwardedPort). UPnP is off unless upnp: the machines' searches would
+    reach the Mac's network through xemu's NAT, and ask its router to
+    forward ports to xemu's address."""
     project = ROOT / "build/xbox/halo"
     names = ("host", "join")
-    environments = (environment + host_environment, environment + join_environment)
+    router = ForwardedPort() if internet and forward else None
+    if internet and not upnp:
+        environment = environment + ["HALO_NET_ALLOW_UPNP=false"]
+    environments = (environment + host_environment + (router.environment() if router else []),
+                    environment + join_environment)
     isos = [build(config, project, environments[0])]
-    isos.append(pack(config, project, environments[1], "halo-join"))
+    if not internet:
+        isos.append(pack(config, project, environments[1], "halo-join"))
     out = ROOT / "build/xbox/runs" / time.strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True)
     console = config["console"]
     eeprom = expand(console.get("eeprom_path", ""))
     if not eeprom.is_file():
         sys.exit("a link needs [console] eeprom_path (each machine its own Ethernet address)")
-    cable = Cable(out / "cable.pcap")
+    cable = None if internet else Cable(out / "cable.pcap")
     machines = []
     deadline = time.time() + timeout
     statuses = [2, 2]
-    try:
-        for index, name in enumerate(names):
-            files = {}
-            # (APFS clones: instant, the image itself untouched)
-            disk = out / f"{name}-hdd.qcow2"
-            if subprocess.run(["cp", "-c", str(expand(console["hdd_path"])), str(disk)]).returncode != 0:
-                sys.exit(f"cloning {console['hdd_path']} failed")
-            files["hdd_path"] = str(disk)
-            files["eeprom_path"] = str(out / f"{name}-eeprom.bin")
-            address = eeprom_with_ethernet_address(eeprom, Path(files["eeprom_path"]), 0x10 + index)
-            net = ["backend = 'udp'", "", "[net.udp]",
-                   f"bind_addr = '127.0.0.1:{free_udp_port()}'",
-                   f"remote_addr = '127.0.0.1:{cable.ports[index]}'"]
-            print(f"{name}: Ethernet {address}")
-            machines.append(Xemu(config, isos[index], out / name, headless, files=files, net=net))
+    invite = []
+    invited = threading.Event()
 
-        def follow(index: int) -> None:
-            connection = machines[index].connect(deadline)
-            if connection is not None:
-                statuses[index] = stream_log(connection, out / names[index] / "log.txt", machines[index].process,
-                                             deadline, f"[{names[index]}] ")
-        threads = [threading.Thread(target=follow, args=(index,), daemon=True) for index in range(2)]
-        for thread in threads:
-            thread.start()
+    def watch_host(line: str) -> None:
+        found = re.search(r"halo://join/[0-9a-f]+", line)
+        if found and not invited.is_set():
+            invite.append(found.group(0))
+            invited.set()
+
+    def start(index: int) -> None:
+        name = names[index]
+        files = {}
+        # (APFS clones: instant, the image itself untouched)
+        disk = out / f"{name}-hdd.qcow2"
+        if subprocess.run(["cp", "-c", str(expand(console["hdd_path"])), str(disk)]).returncode != 0:
+            sys.exit(f"cloning {console['hdd_path']} failed")
+        files["hdd_path"] = str(disk)
+        files["eeprom_path"] = str(out / f"{name}-eeprom.bin")
+        address = eeprom_with_ethernet_address(eeprom, Path(files["eeprom_path"]), 0x10 + index)
+        if internet:
+            net = router.net() if router and index == 0 else None
+        else:
+            net = ["backend = 'udp'", "", "[net.udp]", f"bind_addr = '127.0.0.1:{free_udp_port()}'",
+                   f"remote_addr = '127.0.0.1:{cable.ports[index]}'"]
+        print(f"{name}: Ethernet {address}")
+        machines.append(Xemu(config, isos[index], out / name, headless, files=files, net=net))
+
+    def follow(index: int) -> None:
+        connection = machines[index].connect(deadline)
+        if connection is not None:
+            statuses[index] = stream_log(connection, out / names[index] / "log.txt", machines[index].process,
+                                         deadline, f"[{names[index]}] ", watch_host if index == 0 else None)
+    try:
+        threads = []
+        for index in range(2):
+            if index == 1 and internet:
+                if not invited.wait(max(0.0, deadline - time.time())) or machines[0].process.poll() is not None:
+                    print("(host: no invite logged; the joining machine is not started)")
+                    break
+                print(f"join: opening {invite[0]}")
+                isos.append(pack(config, project, environments[1] + [f"HALO_COMMAND_LINE={invite[0]}"],
+                                 "halo-join"))
+            start(index)
+            threads.append(threading.Thread(target=follow, args=(index,), daemon=True))
+            threads[-1].start()
         for thread in threads:
             thread.join()
         for name, status, machine in zip(names, statuses, machines):
@@ -583,7 +677,10 @@ def link(config: dict, timeout: float, host_environment: list, join_environment:
     finally:
         for machine in machines:
             machine.stop()
-        cable.close(names)
+        if cable:
+            cable.close(names)
+        if router:
+            router.close()
         for name in names:
             (out / f"{name}-hdd.qcow2").unlink(missing_ok=True)
     print(f"link saved in {out.relative_to(ROOT)}")
@@ -654,8 +751,9 @@ class LogScreenshots:
 
 
 def stream_log(connection: socket.socket, path: Path, process: subprocess.Popen, deadline: float,
-               prefix: str = "") -> int:
-    """prints and saves the program's serial lines, its frames as PNGs; 0 at the done marker"""
+               prefix: str = "", watch=None) -> int:
+    """prints and saves the program's serial lines, its frames as PNGs, and
+    passes each line to watch; 0 at the done marker"""
     connection.settimeout(0.5)
     pending = b""
     screenshots = LogScreenshots(path.parent)
@@ -676,6 +774,8 @@ def stream_log(connection: socket.socket, path: Path, process: subprocess.Popen,
                 print(prefix + line, flush=True)
                 log.write(line + "\n")
                 log.flush()
+                if watch:
+                    watch(line)
                 if line.strip() == DONE_MARKER:
                     return 0
     return 2
@@ -770,6 +870,15 @@ def main() -> None:
     link_parser.add_argument("map", help="the map the host plays, MAP[:VARIANT,...] (debug.network_test host:)")
     link_parser.add_argument("--timeout", type=float, default=180)
     link_parser.add_argument("--headless", action="store_true", help="no xemu windows (-display none)")
+    link_parser.add_argument("--internet", action="store_true",
+                             help="no cable: each machine on its own xemu NAT, the joining one opening the "
+                                  "host's invite (internet play)")
+    link_parser.add_argument("--forward", action="store_true",
+                             help="with --internet: the host's router forwards its tunnel port (which xemu's "
+                                  "NAT otherwise needs to connect)")
+    link_parser.add_argument("--upnp", action="store_true",
+                             help="with --internet: let the machines ask the Mac's network's router to forward "
+                                  "ports (UPnP), which is off otherwise")
     link_parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
                              help="an environment variable for both machines; repeatable")
     link_parser.add_argument("--host-env", action="append", default=[], metavar="NAME=VALUE",
@@ -785,7 +894,8 @@ def main() -> None:
         return
     if args.command == "link":
         sys.exit(link(config, args.timeout, [f"HALO_NETWORK_TEST=host:{args.map}"] + args.host_env,
-                      ["HALO_NETWORK_TEST=join"] + args.join_env, args.env, args.headless))
+                      ["HALO_NETWORK_TEST=join"] + args.join_env, args.env, args.headless, args.internet,
+                      args.forward, args.upnp))
     sys.exit(run(config, args.project.resolve(), args.timeout, args.headless, args.gdb, parse_presses(args.press),
             args.shot, run_environment(args), args.wav))
 

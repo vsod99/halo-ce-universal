@@ -22,8 +22,9 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .linux_build import (EXPAT_DIR, MUSL_MATH_DIR, TOML_DIR, XDK_INCLUDE, ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES,
-                          compile_launcher, game_defines_and_includes, game_sources, musl_math_sources,
+from .linux_build import (EXPAT_DIR, KCP_DIR, MINIUPNPC_DEFINES, MINIUPNPC_DIR, MONOCYPHER_DIR, MUSL_MATH_DIR,
+                          TOML_DIR, XDK_INCLUDE, ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES, compile_launcher,
+                          game_defines_and_includes, game_sources, miniupnpc_sources, musl_math_sources,
                           xdk_headers)
 from .embed_assets import xbox_menu_inputs
 from .ninja_syntax import Writer
@@ -252,7 +253,8 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
         abi, " ".join(PLATFORM_FLAGS),
         f"-include {prefix_header}", posix_includes,
         f"-I{PORT_DIR / 'src'}", f"-I{LINUX_DIR / 'src'}", "-Iport/include",
-        f"-I{TOML_DIR}", f"-I{EXPAT_DIR}", f"-I{ZLIB_DIR}", "-Isource -Isource/cseries",
+        f"-I{TOML_DIR}", f"-I{EXPAT_DIR}", f"-I{ZLIB_DIR}", f"-I{KCP_DIR}", f"-I{MONOCYPHER_DIR}",
+        "-Isource -Isource/cseries",
         libc_includes, f"-I{XDK_INCLUDE}",
         # pbkit's NV2A method names (nv_regs.h) for the Direct3D device
         # (d3d8_nv2a.c), searched last
@@ -290,9 +292,30 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
 
     for source in lwip_sources(nxdk_lib):
         add_nxdk_object(source)
+    # internet play's UPnP (nxdk_upnp.c, port/linux/src/posix_upnp.c) and
+    # miniupnpc, as on a POSIX system: lwIP's sockets by their POSIX names
+    # (port/xbox/include/lwip_posix, ahead of the other headers), _WIN32 not
+    # defined
+    upnp_cflags = " ".join([
+        f"-I{PORT_DIR / 'include' / 'lwip_posix'}", lwip_cflags, "-U_WIN32", *MINIUPNPC_DEFINES,
+        "-DNEED_STRUCT_IP_MREQN", f"-I{MINIUPNPC_DIR / 'include'}", f"-I{MINIUPNPC_DIR / 'src'}",
+    ])
+    upnp_headers = sorted((PORT_DIR / "include" / "lwip_posix").rglob("*.h"))
+    for source in miniupnpc_sources():
+        obj = obj_dir / "miniupnpc" / source.with_suffix(".o").name
+        objects.append(obj)
+        n.build(outputs=obj, rule="xbox_cc", inputs=source,
+                implicit=[PORT_DIR / "src" / "lwip_config" / "lwipopts.h", *upnp_headers],
+                variables={"cflags": f"{upnp_cflags} -w"})
     for source in sorted((PORT_DIR / "src").glob("*.c")):
         if source.name == "nxdk_net.c":
             add_object(source, lwip_cflags)
+        elif source.name == "nxdk_upnp.c":
+            obj = obj_dir / source.with_suffix(".o")
+            objects.append(obj)
+            n.build(outputs=obj, rule="xbox_cc", inputs=source,
+                    implicit=[PORT_DIR / "src" / "lwip_config" / "lwipopts.h", *upnp_headers],
+                    variables={"cflags": upnp_cflags})
         else:
             add_object(source, nxdk_cflags if source.name.startswith("nxdk_") else platform_cflags)
     for source in sorted((PORT_DIR / "common").glob("*.c")):
@@ -312,6 +335,11 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
     add_object(menus, platform_cflags)
     # the settings file's parser (port_config.c)
     add_object(TOML_DIR / "tomlc17.c", " ".join([abi, "-std=gnu11", "-w", pdclib_includes]))
+    # internet play's reliable streams (port/third_party/kcp; p2p.c) and
+    # its signatures (port/third_party/monocypher; p2p_crypto.c)
+    add_object(KCP_DIR / "ikcp.c", " ".join([abi, "-std=gnu11", "-w", pdclib_includes]))
+    for name in ("monocypher.c", "monocypher-ed25519.c"):
+        add_object(MONOCYPHER_DIR / name, " ".join([abi, "-std=gnu11", "-w", pdclib_includes]))
     # the port's zlib (port/third_party/zlib/zlib_prefixed.h), which inflates
     # the menus' pictures (png_decode.c)
     for name in ZLIB_SOURCES:
@@ -339,7 +367,11 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
     ldflags = " ".join(f"-include:{symbol}" for symbol in config.get("include_symbols", []))
     n.build(outputs=exe, rule="xbox_link", inputs=objects, variables={"libs": libs, "ldflags": ldflags})
     n.build(outputs=xbe, rule="xbox_xbe", inputs=exe)
+    # internet play's MQTT brokers, beside the game (D:; p2p_signal.c)
+    brokers = xbe.parent / "brokers.txt"
+    n.rule(name="xbox_copy", command="cp $in $out", description="XBOX COPY $out")
+    n.build(outputs=brokers, rule="xbox_copy", inputs=Path("port/assets/network/brokers.txt"))
     # the game's units alone, which compile before the platform layer links
     n.build(outputs="xbox-game", rule="phony", inputs=game_objects)
-    n.build(outputs="xbox", rule="phony", inputs=xbe)
+    n.build(outputs="xbox", rule="phony", inputs=[xbe, brokers])
     n.newline()

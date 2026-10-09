@@ -1632,10 +1632,10 @@ static void broker_readable(struct broker *broker)
 
 /* ---------- p2p.c's side */
 
-/* the brokers in network.brokers_file (beside config.toml, unless a full
-path: port/assets/network/brokers.txt, which the builds put there), one on
-each line, "#" starting a comment, into text: host:port entries separated by
-commas; empty if the file cannot be read */
+/* the brokers in network.brokers_file (beside config.toml, or on the Xbox
+beside the game, unless a full path: port/assets/network/brokers.txt, which
+the builds put there), one on each line, "#" starting a comment, into text:
+host:port entries separated by commas; empty if the file cannot be read */
 static void brokers_list(char *text, size_t size)
 {
 	const char *name = config_string("network.brokers_file");
@@ -1662,8 +1662,14 @@ static void brokers_list(char *text, size_t size)
 		snprintf(path, sizeof(path), "%s", name);
 	else
 	{
+#ifdef HALO_XBOX
+		/* (the Xbox's settings are on its hard disk, the game's own files
+		in the XBE's folder, D:, which the release puts this one in) */
+		snprintf(path, sizeof(path), "D:/%s", name);
+#else
 		config_folder(path, sizeof(path));
 		snprintf(path + strlen(path), sizeof(path) - strlen(path), "%s", name);
+#endif
 	}
 	file = config_file_read(path, &file_size);
 	if (!file)
