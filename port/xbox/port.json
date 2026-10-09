@@ -1,5 +1,5 @@
 {
-  "comment": "Original Xbox build inputs (tools/xbox_build.py). The game's sources, defines and include directories are the Linux build's (port/linux/port.json); this lists the other ports' platform units the Xbox shares (Linux's DirectSound mixer, onto port/xbox/src/nxdk_audio.c's AC'97 output, and Linux's Winsock layer over port/xbox/src/nxdk_net.c's lwIP sockets), and the Windows ones it compiles against nxdk's Windows API. See port/xbox/README.md. include_symbols are linked in by name: nxdk's automount of D: to the XBE's folder.",
+  "comment": "Original Xbox build inputs (tools/xbox_build.py). The game's sources, defines and include directories are the Linux build's (port/linux/port.json); this lists the other ports' platform units the Xbox shares (Linux's DirectSound mixer, onto port/xbox/src/nxdk_audio.c's AC'97 output, and Linux's Winsock layer over port/xbox/src/nxdk_net.c's lwIP sockets and its internet play (p2p*.c, over nxdk_p2p.c and nxdk_upnp.c)), and the Windows ones it compiles against nxdk's Windows API. See port/xbox/README.md. include_symbols are linked in by name: nxdk's automount of D: to the XBE's folder.",
   "platform_sources": [
     "port/linux/src/bink_null.c",
     "port/linux/src/d3d8_resources.c",
@@ -8,7 +8,12 @@
     "port/linux/src/menu_files.c",
     "port/linux/src/msvc_crt.c",
     "port/linux/src/msvc_wide.c",
+    "port/linux/src/p2p.c",
+    "port/linux/src/p2p_crypto.c",
+    "port/linux/src/p2p_discord.c",
+    "port/linux/src/p2p_lobby.c",
     "port/linux/src/p2p_sanitize.c",
+    "port/linux/src/p2p_signal.c",
     "port/linux/src/png_decode.c",
     "port/linux/src/port_config.c",
     "port/linux/src/xbdm.c",

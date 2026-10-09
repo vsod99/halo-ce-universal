@@ -24,7 +24,9 @@ rest (families, types, protocols and the option numbers) are the same.
 #include <errno.h>
 #include <string.h>
 
+#include <lwip/api.h>
 #include <lwip/dhcp.h>
+#include <lwip/dns.h>
 #include <lwip/netif.h>
 #include <lwip/netifapi.h>
 #include <lwip/sockets.h>
@@ -55,10 +57,14 @@ static void tcpip_ready(void *context)
 static void ethernet_status_changed(struct netif *netif)
 {
 	posix_ulong address = ip4_addr_get_u32(netif_ip4_addr(netif));
+	const ip_addr_t *dns = dns_getserver(0);
+	posix_ulong dns_address = dns && IP_IS_V4(dns) ? ip4_addr_get_u32(ip_2_ip4(dns)) : 0;
 
 	if (address)
-		platform_log("network: Ethernet address %lu.%lu.%lu.%lu (%s)", address & 0xff, (address >> 8) & 0xff,
-			(address >> 16) & 0xff, address >> 24, (address & 0xffff) == 0xfea9 ? "link-local" : "DHCP");
+		platform_log("network: Ethernet address %lu.%lu.%lu.%lu (%s), DNS %lu.%lu.%lu.%lu", address & 0xff,
+			(address >> 8) & 0xff, (address >> 16) & 0xff, address >> 24,
+			(address & 0xffff) == 0xfea9 ? "link-local" : "DHCP", dns_address & 0xff, (dns_address >> 8) & 0xff,
+			(dns_address >> 16) & 0xff, dns_address >> 24);
 }
 
 __attribute__((constructor)) static void network_start(void)
@@ -121,6 +127,19 @@ posix_ulong posix_local_ipv4_address(void)
 			platform_log("network: %s", state ? "link up, no address yet" : "no link");
 	}
 	return address;
+}
+
+/* (lwIP's DNS, from the DHCP server: none with a link-local address) */
+posix_ulong posix_resolve_ipv4(const char *host)
+{
+	ip_addr_t address;
+
+	if (!network_started || netconn_gethostbyname_addrtype(host, &address, NETCONN_DNS_IPV4) != ERR_OK ||
+		!IP_IS_V4(&address))
+	{
+		return 0;
+	}
+	return ip4_addr_get_u32(ip_2_ip4(&address));
 }
 
 /* ---------- errors */

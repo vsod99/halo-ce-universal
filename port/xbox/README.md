@@ -63,9 +63,11 @@ pictures change.
 | `nxdk_nv2a.c` | pbkit: the video mode, the push buffer, the three screen buffers flipped at the vertical blank (started before the game takes its memory), and context DMAs over the low 64 MB for the game's own surfaces |
 | `nxdk_gamepads.c` | The controllers through nxdk's USB host stack (started before the game takes its memory: its pool is contiguous); each port's latest report |
 | `xinput_xbox.c` | The SDK's `XInput*` over them (a report is an `XINPUT_GAMEPAD`), rumble; the menus' text fields on the game's on-screen keyboard (`platform_text_field_on_screen`) |
-| `xbox_platform.c` | The desktop's hooks as the Xbox answers them; no high-res HUD or text, no internet play yet |
+| `xbox_platform.c` | The desktop's hooks as the Xbox answers them; no high-res HUD or text |
 | `nxdk_audio.c` | The sound output for Linux's DirectSound mixer (`port/linux/src/dsound_sdl.c`): 48 kHz stereo through the AC'97 controller, a thread above the game's keeping about 64 ms of its descriptors mixed ahead (the ring set aside before the game takes its memory); the log has the mixing's share of the processor every 30 s. The APU is not used yet |
-| `nxdk_net.c` | The sockets under Linux's Winsock layer (`port/linux/src/xnet.c`) over lwIP, which the build compiles with the loopback interface (`lwip_config/lwipopts.h`): nxdk's Ethernet driver (started before the game takes its memory), the address from DHCP or a link-local one in the background (claimed once the first DHCP request goes unanswered, there 7-8 s after start-up; logged when it comes), XNet's link the cable's and its address pending until then (the game's transport waits up to 10 s for it, as with the console's own XNet). A split screen game joins its own host through 127.0.0.1 |
+| `nxdk_net.c` | The sockets under Linux's Winsock layer (`port/linux/src/xnet.c`) over lwIP, which the build compiles with the loopback interface (`lwip_config/lwipopts.h`): nxdk's Ethernet driver (started before the game takes its memory), the address from DHCP or a link-local one in the background (claimed once the first DHCP request goes unanswered, there 7-8 s after start-up; logged when it comes), XNet's link the cable's and its address pending until then (the game's transport waits up to 10 s for it, as with the console's own XNet). A split screen game joins its own host through 127.0.0.1. Names are looked up with lwIP's DNS (the DHCP server's; none with a link-local address) |
+| `nxdk_p2p.c` | Internet play's (`port/linux/src/p2p*.c`) process half of `posix.h`: the hardware id from the EEPROM's serial number and Ethernet address; no command line (a test's `HALO_COMMAND_LINE` stands in), links, second copy or Discord. The brokers' list is `D:\brokers.txt`, beside the XBE (the build puts it there) |
+| `nxdk_upnp.c` | Internet play's UPnP: `port/linux/src/posix_upnp.c` and miniupnpc compiled as on a POSIX system against lwIP's sockets by their POSIX names (`include/lwip_posix`) |
 
 Threads, mutexes, condition variables and clocks are the Windows build's
 (`port/windows/src/win32_threads.c`, nxdk has those Windows calls), and the
@@ -162,6 +164,26 @@ section's checksum made again). The logs come prefixed `[host]` and
 
 The network tests' tick lines show each machine's view of every player
 (position, health, weapons, score, kills and deaths), to compare.
+
+### Internet play between two Xboxes
+
+    python3 tools/xbox_dev.py link bloodgulch --internet --forward
+
+The same two machines without the cable: each on its own xemu NAT, which
+reaches the internet through the Mac, as two players' homes. The host's
+invite (logged as it starts hosting) is the joining machine's command line
+(`HALO_COMMAND_LINE`, which the runner sets when it sees the invite and
+then starts that machine), so it reaches the host through the public MQTT
+brokers, the tunnel connects, and the host's game is in its system link list.
+xemu's NAT gives each destination its own port, which no two machines get
+through (`p2p.c` says so in the log), so `--forward` has the host's router
+forward its tunnel port, as a player would: xemu forwards a port of the Mac
+to the host's `network.tunnel_port`, and the runner is the host's only STUN
+server, which tells it that port of 10.0.2.2 is its internet address (the
+joining machine's NAT takes 10.0.2.2 to the Mac). Without `--forward` the
+brokers and STUN are the public ones and the machines find each other but
+cannot connect. UPnP is off unless `--upnp`: the machines would ask the
+Mac's network's router to forward ports to xemu's address.
 
 ## Programs
 

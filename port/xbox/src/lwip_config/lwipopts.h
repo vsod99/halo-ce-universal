@@ -39,6 +39,10 @@ default is 4) */
 /* FIONREAD (Winsock's ioctlsocket), SO_RCVBUF and SO_REUSEADDR */
 #define LWIP_SO_RCVBUF 1
 #define SO_REUSE 1
+/* SO_RCVTIMEO and SO_SNDTIMEO: UPnP's requests to the router
+(nxdk_upnp.c) give up on one that does not answer */
+#define LWIP_SO_RCVTIMEO 1
+#define LWIP_SO_SNDTIMEO 1
 /* the platform layer calls lwip_socket and the rest by those names */
 #define LWIP_COMPAT_SOCKETS 0
 #define LWIP_POSIX_SOCKETS_IO_NAMES 0

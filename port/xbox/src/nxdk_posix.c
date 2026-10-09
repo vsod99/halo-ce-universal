@@ -429,9 +429,11 @@ struct tm *gmtime_r(const time_t *timer, struct tm *result)
 
 The Xbox has no entropy source the kernel gathers: a SHA-1 state (the
 kernel's) seeded with the EEPROM, which differs between consoles (serial
-number, keys), and fed the performance counter at every draw, as nxdk's
-rand_s. Good for the menus' XML hash salt (expat); internet play's keys
-(posix.h) want more (the plan's fourth phase). */
+number, keys), the clock's date and time, and the processor's cycle count
+across short waits (interrupts land in them: the timer, USB, the network
+card), and fed the performance counter at every draw, as nxdk's rand_s.
+Internet play's keys and invites (port/linux/src/p2p.c) come from it, made
+seconds after start-up, once the network has an address. */
 static unsigned char random_state[116];
 static CRITICAL_SECTION random_lock;
 /* 0, then 1 while the first caller sets the state up, then 2 */
@@ -443,6 +445,8 @@ static void random_initialize(void)
 {
 	unsigned char eeprom[256];
 	ULONG read = 0, type;
+	LARGE_INTEGER now;
+	int index;
 
 	if (random_ready == 2)
 		return;
@@ -456,6 +460,16 @@ static void random_initialize(void)
 	XcSHAInit(random_state);
 	ExQueryNonVolatileSetting(0xFFFF, &type, eeprom, sizeof(eeprom), &read);
 	XcSHAUpdate(random_state, eeprom, read);
+	KeQuerySystemTime(&now);
+	XcSHAUpdate(random_state, (PUCHAR)&now, sizeof(now));
+	for (index = 0; index < 64; index++)
+	{
+		unsigned long long cycles = __builtin_ia32_rdtsc();
+
+		KeStallExecutionProcessor(1);
+		cycles = __builtin_ia32_rdtsc() - cycles;
+		XcSHAUpdate(random_state, (PUCHAR)&cycles, sizeof(cycles));
+	}
 	InterlockedExchange(&random_ready, 2);
 }
 
