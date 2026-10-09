@@ -137,9 +137,13 @@ xemu's QMP has no `screendump`, since xemu draws with its own renderer:
 `--shot SECONDS` saves xemu's window that long after the program's first
 log line as `shot-SECONDS.png` in the run's folder (the terminal needs
 macOS's Screen Recording permission). `--wav` records the sound card as
-`sound.wav` there instead of playing it (xemu's `-audio driver=wav`;
-xemu writes it at 44.1 kHz). On the console, pictures of frames
-will come from the program over the network.
+`sound.wav` there (xemu's `-audio driver=wav`; xemu writes it at 44.1
+kHz). xemu plays only its APU on the Mac, never the AC'97 controller the
+game plays through (its SDL backend crashes for it, `-audio driver=sdl`),
+so a run is silent unless `--listen`: it records as `--wav` does, and
+`tools/xbox_listen.swift` (built with `swiftc` on first use) plays the file
+as xemu writes it. On the console, pictures of frames will come from the
+program over the network.
 
 ### System link between two Xboxes
 

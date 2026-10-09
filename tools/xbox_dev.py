@@ -391,11 +391,25 @@ class Xemu:
         shutil.rmtree(self.work, ignore_errors=True)
 
 
+def listener() -> Path:
+    """tools/xbox_listen.swift, built when it changes"""
+    source = ROOT / "tools/xbox_listen.swift"
+    program = ROOT / "build/xbox/tools/xbox_listen"
+    if not program.exists() or program.stat().st_mtime < source.stat().st_mtime:
+        program.parent.mkdir(parents=True, exist_ok=True)
+        if subprocess.run(["swiftc", "-O", str(source), "-o", str(program)]).returncode != 0:
+            sys.exit("building tools/xbox_listen.swift failed (swiftc, from Xcode's command line tools)")
+    return program
+
+
 def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, presses: list,
-        shots: list, environment: list, wav: bool = False) -> int:
+        shots: list, environment: list, wav: bool = False, listen: bool = False) -> int:
     iso = build(config, project, environment)
     out = ROOT / "build/xbox/runs" / time.strftime("%Y%m%d-%H%M%S")
-    machine = Xemu(config, iso, out, headless, gdb, wav)
+    machine = Xemu(config, iso, out, headless, gdb, wav or listen)
+    # (xemu plays the AC'97 controller's sound into a WAV file alone: its SDL
+    # output crashes for it; the player follows the file)
+    player = subprocess.Popen([str(listener()), str(out / "sound.wav")]) if listen else None
 
     # xemu's QMP has no screendump (it draws with its own renderer): frames
     # come from the program itself, in its log
@@ -414,7 +428,9 @@ def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, 
             print(f"(no '{DONE_MARKER}': {reason}; xemu's own log is {out.relative_to(ROOT) / 'xemu.txt'})")
     finally:
         machine.stop()
-    if wav:
+        if player:
+            player.terminate()
+    if wav or listen:
         finish_wav(out / "sound.wav")
     print(f"run saved in {out.relative_to(ROOT)}")
     return status
@@ -862,7 +878,11 @@ def main() -> None:
                                  "(debug.screenshot_every), and the targets besides the screen it drew into "
                                  "as frame-N-ADDRESS.png")
     run_parser.add_argument("--wav", action="store_true",
-                            help="record the sound as sound.wav in the run's folder (48 kHz stereo)")
+                            help="record the sound as sound.wav in the run's folder (44.1 kHz stereo)")
+    run_parser.add_argument("--listen", action="store_true",
+                            help="play the sound on the Mac as it comes (xemu cannot play the AC'97 "
+                                 "controller's itself): recorded as with --wav, and followed by "
+                                 "tools/xbox_listen.swift")
     run_parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
                             help="an environment variable for the run, such as HALO_GPU_TRACE=1500 "
                                  "(D:\\environment.txt); repeatable")
@@ -897,7 +917,7 @@ def main() -> None:
                       ["HALO_NETWORK_TEST=join"] + args.join_env, args.env, args.headless, args.internet,
                       args.forward, args.upnp))
     sys.exit(run(config, args.project.resolve(), args.timeout, args.headless, args.gdb, parse_presses(args.press),
-            args.shot, run_environment(args), args.wav))
+            args.shot, run_environment(args), args.wav, args.listen))
 
 
 if __name__ == "__main__":
