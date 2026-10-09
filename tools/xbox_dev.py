@@ -403,10 +403,16 @@ def listener() -> Path:
 
 
 def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, presses: list,
-        shots: list, environment: list, wav: bool = False, listen: bool = False) -> int:
+        shots: list, environment: list, wav: bool = False, listen: bool = False,
+        router_forward: bool = False) -> int:
+    router = RouterForward() if router_forward else None
+    forwarded = ForwardedPort(router.port, router.external_address) if router else None
+    if forwarded:
+        # (its own UPnP would ask for xemu's address, which the router refuses)
+        environment = environment + forwarded.environment() + ["HALO_NET_ALLOW_UPNP=false"]
     iso = build(config, project, environment)
     out = ROOT / "build/xbox/runs" / time.strftime("%Y%m%d-%H%M%S")
-    machine = Xemu(config, iso, out, headless, gdb, wav or listen)
+    machine = Xemu(config, iso, out, headless, gdb, wav or listen, net=forwarded.net() if forwarded else None)
     # (xemu plays the AC'97 controller's sound into a WAV file alone: its SDL
     # output crashes for it; the player follows the file)
     player = subprocess.Popen([str(listener()), str(out / "sound.wav")]) if listen else None
@@ -430,6 +436,10 @@ def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, 
         machine.stop()
         if player:
             player.terminate()
+        if forwarded:
+            forwarded.close()
+        if router:
+            router.close()
     if wav or listen:
         finish_wav(out / "sound.wav")
     print(f"run saved in {out.relative_to(ROOT)}")
@@ -554,8 +564,12 @@ class ForwardedPort:
     xemu NAT takes to the Mac (127.0.0.1)"""
     TUNNEL_PORT = 2310
 
-    def __init__(self):
-        self.mac_port = free_udp_port()
+    def __init__(self, mac_port: int = 0, address: str = "10.0.2.2"):
+        """mac_port and address: the port and address told, which the
+        router forwards (RouterForward), instead of 10.0.2.2 and a port of
+        the Mac's own"""
+        self.mac_port = mac_port or free_udp_port()
+        self.address = address
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(("127.0.0.1", 0))
         self.socket.settimeout(0.5)
@@ -584,7 +598,7 @@ class ForwardedPort:
                 return
             if len(request) < 20 or request[:2] != b"\x00\x01":
                 continue
-            address = bytes([10, 0, 2, 2])
+            address = socket.inet_aton(self.address)
             value = (b"\x00\x01" + (self.mac_port ^ cookie >> 16).to_bytes(2, "big") +
                      (int.from_bytes(address, "big") ^ cookie).to_bytes(4, "big"))
             attribute = (0x0020).to_bytes(2, "big") + len(value).to_bytes(2, "big") + value
@@ -595,8 +609,97 @@ class ForwardedPort:
         self.running = False
         self.thread.join()
         self.socket.close()
-        print(f"router: forwarded the Mac's UDP port {self.mac_port} to the host's {self.TUNNEL_PORT}; "
+        print(f"router: forwarded the Mac's UDP port {self.mac_port} to the Xbox's {self.TUNNEL_PORT}; "
               f"answered {self.answered} STUN requests")
+
+
+class RouterForward:
+    """a UDP port of the Mac's network's router forwarded to the Mac, asked
+    for with UPnP (as the Xbox would ask for its own: xemu's NAT address is
+    not on the router's network, so the router refuses it that), for an
+    hour, and given up at the end; the router's internet address"""
+    SERVICES = ("urn:schemas-upnp-org:service:WANIPConnection:1", "urn:schemas-upnp-org:service:WANIPConnection:2",
+                "urn:schemas-upnp-org:service:WANPPPConnection:1")
+
+    def __init__(self):
+        import urllib.parse
+        import urllib.request
+        import xml.etree.ElementTree as ElementTree
+        self.request = urllib.request
+        search = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        search.settimeout(2)
+        search.sendto(b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\n"
+                      b"ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\r\n", ("239.255.255.250", 1900))
+        locations = []
+        try:
+            while True:
+                reply, _ = search.recvfrom(4096)
+                found = re.search(rb"(?im)^location:\s*(\S+)", reply)
+                if found and found.group(1).decode() not in locations:
+                    locations.append(found.group(1).decode())
+        except socket.timeout:
+            pass
+        search.close()
+        self.control = None
+        for location in locations:
+            description = ElementTree.fromstring(urllib.request.urlopen(location, timeout=5).read())
+            for service in description.iter():
+                if not service.tag.endswith("}service"):
+                    continue
+                fields = {child.tag.split("}")[-1]: (child.text or "").strip() for child in service}
+                if fields.get("serviceType") in self.SERVICES:
+                    self.control = urllib.parse.urljoin(location, fields["controlURL"])
+                    self.service = fields["serviceType"]
+                    break
+            if self.control:
+                break
+        if not self.control:
+            sys.exit(f"router: no UPnP Internet Gateway Device answered ({len(locations)} devices)")
+        # this Mac's address on the router's network
+        router_host = urllib.parse.urlparse(self.control).hostname
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.connect((router_host, 1900))
+        self.lan_address = probe.getsockname()[0]
+        probe.close()
+        self.external_address = self.soap("GetExternalIPAddress", {})["NewExternalIPAddress"]
+        self.port = 0
+        for _ in range(8):
+            port = free_udp_port() if not self.port else 49152 + int.from_bytes(os.urandom(2), "big") % 16384
+            try:
+                self.soap("AddPortMapping", {
+                    "NewRemoteHost": "", "NewExternalPort": port, "NewProtocol": "UDP", "NewInternalPort": port,
+                    "NewInternalClient": self.lan_address, "NewEnabled": 1,
+                    "NewPortMappingDescription": "Halo Xbox test (xbox_dev.py)", "NewLeaseDuration": 3600})
+                self.port = port
+                break
+            except RuntimeError as error:
+                print(f"router: port {port}: {error}")
+                self.port = -1
+        if self.port <= 0:
+            sys.exit("router: it refused to forward a port")
+        print(f"router: {self.external_address}:{self.port} forwarded to this Mac ({self.lan_address}) for an hour")
+
+    def soap(self, action: str, arguments: dict) -> dict:
+        body = "".join(f"<{name}>{value}</{name}>" for name, value in arguments.items())
+        envelope = ('<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
+                    's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body>'
+                    f'<u:{action} xmlns:u="{self.service}">{body}</u:{action}></s:Body></s:Envelope>')
+        request = self.request.Request(self.control, data=envelope.encode(), headers={
+            "Content-Type": 'text/xml; charset="utf-8"', "SOAPAction": f'"{self.service}#{action}"'})
+        try:
+            reply = self.request.urlopen(request, timeout=5).read().decode("utf-8", "replace")
+        except Exception as error:
+            text = error.read().decode("utf-8", "replace") if hasattr(error, "read") else str(error)
+            code = re.search(r"<errorCode>(\d+)</errorCode>", text)
+            raise RuntimeError(f"{action} failed ({code.group(1) if code else text[:200]})")
+        return dict(re.findall(r"<(New\w+)>([^<]*)</New\w+>", reply))
+
+    def close(self) -> None:
+        try:
+            self.soap("DeletePortMapping", {"NewRemoteHost": "", "NewExternalPort": self.port, "NewProtocol": "UDP"})
+            print(f"router: forwarding of port {self.port} removed")
+        except RuntimeError as error:
+            print(f"router: removing the forwarding of port {self.port}: {error}")
 
 
 def link(config: dict, timeout: float, host_environment: list, join_environment: list, environment: list,
@@ -883,6 +986,11 @@ def main() -> None:
                             help="play the sound on the Mac as it comes (xemu cannot play the AC'97 "
                                  "controller's itself): recorded as with --wav, and followed by "
                                  "tools/xbox_listen.swift")
+    run_parser.add_argument("--router-forward", action="store_true",
+                            help="ask the Mac's network's router (UPnP) to forward a UDP port to the Mac, which "
+                                 "xemu forwards to the Xbox's network.tunnel_port, and tell the Xbox (as its only "
+                                 "STUN server) that the router's address and that port are its own: internet "
+                                 "play reaches it as a console whose router forwards it a port. Removed at the end")
     run_parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
                             help="an environment variable for the run, such as HALO_GPU_TRACE=1500 "
                                  "(D:\\environment.txt); repeatable")
@@ -917,7 +1025,7 @@ def main() -> None:
                       ["HALO_NETWORK_TEST=join"] + args.join_env, args.env, args.headless, args.internet,
                       args.forward, args.upnp))
     sys.exit(run(config, args.project.resolve(), args.timeout, args.headless, args.gdb, parse_presses(args.press),
-            args.shot, run_environment(args), args.wav, args.listen))
+            args.shot, run_environment(args), args.wav, args.listen, args.router_forward))
 
 
 if __name__ == "__main__":
