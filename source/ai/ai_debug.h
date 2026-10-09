@@ -28,6 +28,18 @@ enum
 	MAXIMUM_AI_DEBUG_PATH_STORAGE = 32,
 };
 
+/* The AI keeps debugging records per actor (26 KB each), which only the AI
+debug renderer reads. The original Xbox has no room for them for the native
+builds' 1024 actors (26 MB of its 128: halo_port_capacity.h): its actors
+share a couple of records (the game only writes them). */
+#ifdef HALO_XBOX
+#define ACTOR_DEBUG_RECORD_COUNT 2
+#define ACTOR_DEBUG_INDEX(actor_index) (DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index) % ACTOR_DEBUG_RECORD_COUNT)
+#else
+#define ACTOR_DEBUG_RECORD_COUNT MAXIMUM_NUMBER_OF_ACTORS
+#define ACTOR_DEBUG_INDEX(actor_index) DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)
+#endif
+
 enum
 {
 	_firing_disabled = 0,
