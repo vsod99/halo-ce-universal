@@ -1188,6 +1188,19 @@ DWORD WSAAPI XNetGetTitleXnAddr(XNADDR *address)
 	address->bSizeOfStruct = sizeof(*address);
 	address->ina.s_addr = ip;
 	memcpy(address->abEnet, p2p_identifier(), sizeof(address->abEnet));
+#ifdef HALO_XBOX
+	/* a cable and no address yet (DHCP, or a link-local one after a few
+	seconds; nxdk_net.c): pending, as the console's own XNet has it, and the
+	transport waits for it (transport_endpoint_set_winsock.c), or a host
+	would advertise no address to join. With no cable, an address of none,
+	so a split screen game still plays over 127.0.0.1. */
+	{
+		extern int xbox_net_link_up(void);
+
+		if (!ip && xbox_net_link_up())
+			return XNET_GET_XNADDR_PENDING;
+	}
+#endif
 	return ip ? (XNET_GET_XNADDR_ETHERNET | XNET_GET_XNADDR_DHCP) : XNET_GET_XNADDR_ETHERNET;
 }
 

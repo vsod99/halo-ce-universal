@@ -51,6 +51,16 @@ static void tcpip_ready(void *context)
 	KeSetEvent((KEVENT *)context, IO_NO_INCREMENT, FALSE);
 }
 
+/* (lwIP's thread, each time the interface's address or state changes) */
+static void ethernet_status_changed(struct netif *netif)
+{
+	posix_ulong address = ip4_addr_get_u32(netif_ip4_addr(netif));
+
+	if (address)
+		platform_log("network: Ethernet address %lu.%lu.%lu.%lu (%s)", address & 0xff, (address >> 8) & 0xff,
+			(address >> 16) & 0xff, address >> 24, (address & 0xffff) == 0xfea9 ? "link-local" : "DHCP");
+}
+
 __attribute__((constructor)) static void network_start(void)
 {
 	KEVENT ready;
@@ -69,6 +79,7 @@ __attribute__((constructor)) static void network_start(void)
 	}
 	g_pnetif = &ethernet;
 	memcpy(ethernet_address, ethernet.hwaddr, sizeof(ethernet_address));
+	netif_set_status_callback(&ethernet, ethernet_status_changed);
 	netifapi_netif_set_default(&ethernet);
 	netifapi_netif_set_up(&ethernet);
 	/* (the address comes when it comes: nothing waits for it; with no DHCP

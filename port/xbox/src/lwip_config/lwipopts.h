@@ -21,9 +21,16 @@ datagrams to this machine's own address looped back too */
 #define LWIP_NETIF_LOOPBACK 1
 
 /* with no DHCP server (two consoles and a cable, or xemu without its NAT),
-a link-local address after two tries, as a retail Xbox's system link has */
+a link-local address, as a retail Xbox's system link has: claimed once the
+first DHCP request goes unanswered (2 s), so it is there 7-8 s after
+start-up, inside the 10 s the game's transport waits for an address
+(transport_endpoint_set_winsock.c). After two tries it came after 12 s,
+too late; claimed from the first request, it beat xemu's NAT's DHCP answer,
+and the transport kept the link-local address it no longer had. */
 #define LWIP_DHCP_AUTOIP_COOP 1
-#define LWIP_DHCP_AUTOIP_COOP_TRIES 2
+#define LWIP_DHCP_AUTOIP_COOP_TRIES 1
+/* the address in the log when it comes or changes (nxdk_net.c) */
+#define LWIP_NETIF_STATUS_CALLBACK 1
 
 /* the sockets of a system link game: its listening one, a connection for
 each machine, and the datagram ones that find and advertise games (the

@@ -5,6 +5,9 @@
     python tools/xbox_dev.py run <dir>       build it, boot it in xemu, stream its log
                                              until it prints the done marker, then
                                              stop xemu
+    python tools/xbox_dev.py link MAP        two xemus, linked: the game hosting MAP
+                                             as a system link game and the game
+                                             joining it (debug.network_test)
 
 The machine's paths live in port/xbox/xemu.local.toml (not committed; the
 template is port/xbox/xemu.example.toml): nxdk, xemu, and the console files
@@ -160,12 +163,18 @@ def build(config: dict, project: Path, environment: list = ()) -> Path:
     if result.returncode != 0:
         print("\n".join(lines[-40:]))
         sys.exit(f"build of {project} failed")
-    bin_dir = project / "bin"
     if project == ROOT / "build/xbox/halo":
-        add_maps(config, bin_dir / "maps")
+        add_maps(config, project / "bin/maps")
+    return pack(config, project, environment, project.name)
+
+
+def pack(config: dict, project: Path, environment: list, name: str) -> Path:
+    """the project's bin/ with the environment as build/xbox/NAME.iso"""
+    env = nxdk_environment(config)
+    bin_dir = project / "bin"
     write_environment(bin_dir, list(environment))
     set_memory_limit(bin_dir / "default.xbe", config["console"].get("memory", "128") != "128")
-    iso = ROOT / "build/xbox" / f"{project.name}.iso"
+    iso = ROOT / "build/xbox" / f"{name}.iso"
     iso.parent.mkdir(parents=True, exist_ok=True)
     iso.unlink(missing_ok=True)
     extract_xiso = Path(env["NXDK_DIR"]) / "tools/extract-xiso/build/extract-xiso"
@@ -183,10 +192,13 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def write_xemu_config(config: dict, iso: Path, directory: Path) -> Path:
+def write_xemu_config(config: dict, iso: Path, directory: Path, files: dict = None, net: list = None) -> Path:
+    """xemu's configuration for a run; files replaces console files (a
+    link's own disk and EEPROM), net the network's lines (NAT by default)"""
     console = config["console"]
-    files = {key: str(expand(console[key])) for key in ("bootrom_path", "flashrom_path", "eeprom_path", "hdd_path")
-             if console.get(key)}
+    files = {**{key: str(expand(console[key])) for key in ("bootrom_path", "flashrom_path", "eeprom_path",
+                                                             "hdd_path") if console.get(key)},
+             **(files or {})}
     files["dvd_path"] = str(iso)
     lines = [
         "[general]",
@@ -207,7 +219,7 @@ def write_xemu_config(config: dict, iso: Path, directory: Path) -> Path:
         "",
         "[net]",
         "enable = true",
-        "backend = 'nat'",
+        *(net or ["backend = 'nat'"]),
     ]
     path = directory / "xemu.toml"
     path.write_text("\n".join(lines) + "\n")
@@ -306,83 +318,276 @@ class Qmp:
                 return reply
 
 
-def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, presses: list,
-        shots: list, environment: list, wav: bool = False) -> int:
-    iso = build(config, project, environment)
-    xemu = expand(config["tools"].get("xemu", "/Applications/xemu.app/Contents/MacOS/xemu"))
-    out = ROOT / "build/xbox/runs" / time.strftime("%Y%m%d-%H%M%S")
-    out.mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix="xemu-"))
-    xemu_config = write_xemu_config(config, iso, work)
-    serial_port, qmp_port = free_port(), free_port()
+class Xemu:
+    """one xemu machine of a run: its window, its program's log on COM2
+    (a socket xemu connects to), the kernel debugger's COM1 in out/com1.bin,
+    and QMP to stop it"""
+    def __init__(self, config: dict, iso: Path, out: Path, headless: bool = False, gdb: bool = False,
+                 wav: bool = False, files: dict = None, net: list = None):
+        xemu = expand(config["tools"].get("xemu", "/Applications/xemu.app/Contents/MacOS/xemu"))
+        out.mkdir(parents=True, exist_ok=True)
+        self.work = Path(tempfile.mkdtemp(prefix="xemu-"))
+        xemu_config = write_xemu_config(config, iso, self.work, files, net)
+        serial_port, self.qmp_port = free_port(), free_port()
 
-    # the serial port's socket: xemu connects to it as a client
-    listener = socket.socket()
-    listener.bind(("127.0.0.1", serial_port))
-    listener.listen(1)
+        # the serial port's socket: xemu connects to it as a client
+        self.listener = socket.socket()
+        self.listener.bind(("127.0.0.1", serial_port))
+        self.listener.listen(1)
 
-    # COM1 is the kernel debugger's when the kernel sees the SuperIO chip
-    # (Cerbios's hybrid kernel): its packets go to a file; the program's
-    # log is on COM2 (port/xbox/common/xbox_log.c)
-    command = [str(xemu), "-config_path", str(xemu_config),
-               "-device", "lpc47m157",
-               "-serial", f"file:{out / 'com1.bin'}",
-               "-serial", f"tcp:127.0.0.1:{serial_port}",
-               "-qmp", f"tcp:127.0.0.1:{qmp_port},server,nowait"]
-    if headless:
-        command += ["-display", "none"]
-    if wav:
-        # the sound card's output to a file instead of the Mac's speakers
-        # (xemu names no audio backend of its own to capture from)
-        command += ["-audio", f"driver=wav,path={out / 'sound.wav'}"]
-    if gdb:
-        command += ["-s", "-S"]
-        print("gdb: target remote localhost:1234 (the CPU waits for 'continue')")
-    print(" ".join(command))
-    xemu_log = (out / "xemu.txt").open("w")
-    process = subprocess.Popen(command, stdout=xemu_log, stderr=subprocess.STDOUT)
+        # COM1 is the kernel debugger's when the kernel sees the SuperIO chip
+        # (Cerbios's hybrid kernel): its packets go to a file; the program's
+        # log is on COM2 (port/xbox/common/xbox_log.c)
+        command = [str(xemu), "-config_path", str(xemu_config),
+                   "-device", "lpc47m157",
+                   "-serial", f"file:{out / 'com1.bin'}",
+                   "-serial", f"tcp:127.0.0.1:{serial_port}",
+                   "-qmp", f"tcp:127.0.0.1:{self.qmp_port},server,nowait"]
+        if headless:
+            command += ["-display", "none"]
+        if wav:
+            # the sound card's output to a file instead of the Mac's speakers
+            # (xemu names no audio backend of its own to capture from)
+            command += ["-audio", f"driver=wav,path={out / 'sound.wav'}"]
+        if gdb:
+            command += ["-s", "-S"]
+            print("gdb: target remote localhost:1234 (the CPU waits for 'continue')")
+        print(" ".join(command))
+        self.xemu_log = (out / "xemu.txt").open("w")
+        self.process = subprocess.Popen(command, stdout=self.xemu_log, stderr=subprocess.STDOUT)
+        self.qmp = None
 
-    # xemu's QMP has no screendump (it draws with its own renderer): frames
-    # will come from the program itself, over the network
-    deadline = time.time() + timeout
-    status = 2
-    qmp = None
-    try:
+    def connect(self, deadline: float):
+        """the program's serial connection, once xemu makes it (None if xemu
+        exits first or the deadline passes)"""
         connection = None
-        listener.settimeout(0.5)
-        while connection is None and time.time() < deadline and process.poll() is None:
+        self.listener.settimeout(0.5)
+        while connection is None and time.time() < deadline and self.process.poll() is None:
             try:
-                connection, _ = listener.accept()
+                connection, _ = self.listener.accept()
             except socket.timeout:
                 pass
         if connection is not None:
             try:
-                qmp = Qmp(qmp_port, deadline)
+                self.qmp = Qmp(self.qmp_port, deadline)
             except OSError:
                 print("(no QMP: xemu cannot be stopped cleanly)")
+        return connection
+
+    def stop(self) -> None:
+        if self.qmp is not None and self.process.poll() is None:
+            try:
+                self.qmp.command("quit")
+            except OSError:
+                pass
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+        shutil.rmtree(self.work, ignore_errors=True)
+
+
+def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, presses: list,
+        shots: list, environment: list, wav: bool = False) -> int:
+    iso = build(config, project, environment)
+    out = ROOT / "build/xbox/runs" / time.strftime("%Y%m%d-%H%M%S")
+    machine = Xemu(config, iso, out, headless, gdb, wav)
+
+    # xemu's QMP has no screendump (it draws with its own renderer): frames
+    # come from the program itself, in its log
+    deadline = time.time() + timeout
+    status = 2
+    try:
+        connection = machine.connect(deadline)
+        if connection is not None:
             if presses:
                 threading.Thread(target=press_buttons, args=(presses, time.time()), daemon=True).start()
             if shots:
                 threading.Thread(target=take_shots, args=(sorted(shots), time.time(), out), daemon=True).start()
-            status = stream_log(connection, out / "log.txt", process, deadline)
+            status = stream_log(connection, out / "log.txt", machine.process, deadline)
         if status != 0:
-            reason = "xemu exited" if process.poll() is not None else f"the {timeout:.0f} s timeout"
+            reason = "xemu exited" if machine.process.poll() is not None else f"the {timeout:.0f} s timeout"
             print(f"(no '{DONE_MARKER}': {reason}; xemu's own log is {out.relative_to(ROOT) / 'xemu.txt'})")
     finally:
-        if qmp is not None and process.poll() is None:
-            try:
-                qmp.command("quit")
-            except OSError:
-                pass
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-        shutil.rmtree(work, ignore_errors=True)
+        machine.stop()
     if wav:
         finish_wav(out / "sound.wav")
     print(f"run saved in {out.relative_to(ROOT)}")
     return status
+
+
+def eeprom_checksum(data: bytes) -> int:
+    """the EEPROM's sections' checksum: the 32-bit words summed with their
+    carries, folded and inverted"""
+    high = low = 0
+    for offset in range(0, len(data), 4):
+        total = (high << 32 | low) + int.from_bytes(data[offset:offset + 4], "little")
+        high, low = total >> 32 & 0xFFFFFFFF, total & 0xFFFFFFFF
+    return ~(high + low) & 0xFFFFFFFF
+
+
+def eeprom_with_ethernet_address(source: Path, destination: Path, last_byte: int) -> str:
+    """a copy of the EEPROM whose factory section (0x30: its checksum over
+    0x34-0x5F; the Ethernet address at 0x40) gives the machine another
+    Ethernet address, its last byte changed; returns the address"""
+    data = bytearray(source.read_bytes())
+    if eeprom_checksum(data[0x34:0x60]) != int.from_bytes(data[0x30:0x34], "little"):
+        sys.exit(f"{source}: the factory section's checksum is wrong (an encrypted or damaged EEPROM?)")
+    data[0x45] = last_byte
+    data[0x30:0x34] = eeprom_checksum(data[0x34:0x60]).to_bytes(4, "little")
+    destination.write_bytes(bytes(data))
+    return ":".join(f"{byte:02x}" for byte in data[0x40:0x46])
+
+
+def free_udp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+class Cable:
+    """the link's cable: each xemu's network card sends its frames to a
+    socket of this, which passes them to the other's, and writes them all
+    to a pcap file (Wireshark, tcpdump -r) with a summary of each machine's
+    traffic at the end"""
+    def __init__(self, path: Path):
+        self.sockets = []
+        for _ in range(2):
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.bind(("127.0.0.1", 0))
+            s.settimeout(0.5)
+            self.sockets.append(s)
+        self.ports = [s.getsockname()[1] for s in self.sockets]
+        self.cards = [None, None]  # each card's own port, as its first frame shows
+        self.pcap = path.open("wb")
+        # (the pcap header: microsecond times, frames up to 64 KB, Ethernet)
+        self.pcap.write((0xA1B2C3D4).to_bytes(4, "little") + (2).to_bytes(2, "little") + (4).to_bytes(2, "little") +
+                        bytes(8) + (65535).to_bytes(4, "little") + (1).to_bytes(4, "little"))
+        self.lock = threading.Lock()
+        self.counts = [{}, {}]
+        self.running = True
+        self.threads = [threading.Thread(target=self.carry, args=(index,), daemon=True) for index in range(2)]
+        for thread in self.threads:
+            thread.start()
+
+    def carry(self, index: int) -> None:
+        """machine index's frames to the other machine"""
+        while self.running:
+            try:
+                frame, source = self.sockets[index].recvfrom(65536)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            self.cards[index] = source
+            other = self.cards[1 - index]
+            if other is not None:
+                self.sockets[1 - index].sendto(frame, other)
+            now = time.time()
+            kind = self.kind(frame)
+            with self.lock:
+                self.counts[index][kind] = self.counts[index].get(kind, 0) + 1
+                self.pcap.write(int(now).to_bytes(4, "little") + int(now % 1 * 1e6).to_bytes(4, "little") +
+                                len(frame).to_bytes(4, "little") * 2 + frame)
+
+    @staticmethod
+    def kind(frame: bytes) -> str:
+        """a frame's protocol and ports, for the summary"""
+        if len(frame) < 14:
+            return "short"
+        ethertype = int.from_bytes(frame[12:14], "big")
+        if ethertype == 0x0806:
+            return "ARP"
+        if ethertype == 0x86DD:
+            return "IPv6"
+        if ethertype != 0x0800 or len(frame) < 34:
+            return f"ethertype {ethertype:04x}"
+        header = (frame[14] & 15) * 4
+        protocol = frame[23]
+        destination = ".".join(str(byte) for byte in frame[30:34])
+        if protocol in (6, 17) and len(frame) >= 14 + header + 4:
+            ports = frame[14 + header:14 + header + 4]
+            name = "TCP" if protocol == 6 else "UDP"
+            return (f"{name} {int.from_bytes(ports[:2], 'big')} -> {destination}:"
+                    f"{int.from_bytes(ports[2:], 'big')}")
+        return f"IP protocol {protocol} -> {destination}"
+
+    def close(self, names: tuple) -> None:
+        self.running = False
+        for thread in self.threads:
+            thread.join()
+        for s in self.sockets:
+            s.close()
+        self.pcap.close()
+        for name, counts in zip(names, self.counts):
+            summary = ", ".join(f"{kind} x{count}" for kind, count in
+                                sorted(counts.items(), key=lambda item: -item[1])[:12])
+            print(f"cable: {name} sent {sum(counts.values())} frames: {summary or 'none'}")
+
+
+def link(config: dict, timeout: float, host_environment: list, join_environment: list, environment: list,
+         headless: bool) -> int:
+    """two Xboxes and a cable: the game hosting a system link game
+    (debug.network_test host:MAP) and the game joining it, in two xemus
+    whose network cards send each other their frames over UDP on this Mac,
+    through the runner, which saves them as cable.pcap (no DHCP server:
+    their link-local addresses). Each has its own clone of
+    the hard disk (xemu locks the image) and its own Ethernet address (an
+    EEPROM copy); the logs, prefixed, until both print the done marker or
+    the timeout. The runs are in build/xbox/runs/TIME/{host,join}."""
+    project = ROOT / "build/xbox/halo"
+    names = ("host", "join")
+    environments = (environment + host_environment, environment + join_environment)
+    isos = [build(config, project, environments[0])]
+    isos.append(pack(config, project, environments[1], "halo-join"))
+    out = ROOT / "build/xbox/runs" / time.strftime("%Y%m%d-%H%M%S")
+    out.mkdir(parents=True)
+    console = config["console"]
+    eeprom = expand(console.get("eeprom_path", ""))
+    if not eeprom.is_file():
+        sys.exit("a link needs [console] eeprom_path (each machine its own Ethernet address)")
+    cable = Cable(out / "cable.pcap")
+    machines = []
+    deadline = time.time() + timeout
+    statuses = [2, 2]
+    try:
+        for index, name in enumerate(names):
+            files = {}
+            # (APFS clones: instant, the image itself untouched)
+            disk = out / f"{name}-hdd.qcow2"
+            if subprocess.run(["cp", "-c", str(expand(console["hdd_path"])), str(disk)]).returncode != 0:
+                sys.exit(f"cloning {console['hdd_path']} failed")
+            files["hdd_path"] = str(disk)
+            files["eeprom_path"] = str(out / f"{name}-eeprom.bin")
+            address = eeprom_with_ethernet_address(eeprom, Path(files["eeprom_path"]), 0x10 + index)
+            net = ["backend = 'udp'", "", "[net.udp]",
+                   f"bind_addr = '127.0.0.1:{free_udp_port()}'",
+                   f"remote_addr = '127.0.0.1:{cable.ports[index]}'"]
+            print(f"{name}: Ethernet {address}")
+            machines.append(Xemu(config, isos[index], out / name, headless, files=files, net=net))
+
+        def follow(index: int) -> None:
+            connection = machines[index].connect(deadline)
+            if connection is not None:
+                statuses[index] = stream_log(connection, out / names[index] / "log.txt", machines[index].process,
+                                             deadline, f"[{names[index]}] ")
+        threads = [threading.Thread(target=follow, args=(index,), daemon=True) for index in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        for name, status, machine in zip(names, statuses, machines):
+            if status != 0:
+                reason = "xemu exited" if machine.process.poll() is not None else f"the {timeout:.0f} s timeout"
+                print(f"({name}: no '{DONE_MARKER}': {reason})")
+    finally:
+        for machine in machines:
+            machine.stop()
+        cable.close(names)
+        for name in names:
+            (out / f"{name}-hdd.qcow2").unlink(missing_ok=True)
+    print(f"link saved in {out.relative_to(ROOT)}")
+    return max(statuses)
 
 
 def finish_wav(path: Path) -> None:
@@ -448,7 +653,8 @@ class LogScreenshots:
         return False
 
 
-def stream_log(connection: socket.socket, path: Path, process: subprocess.Popen, deadline: float) -> int:
+def stream_log(connection: socket.socket, path: Path, process: subprocess.Popen, deadline: float,
+               prefix: str = "") -> int:
     """prints and saves the program's serial lines, its frames as PNGs; 0 at the done marker"""
     connection.settimeout(0.5)
     pending = b""
@@ -467,7 +673,7 @@ def stream_log(connection: socket.socket, path: Path, process: subprocess.Popen,
                 line = raw.decode("latin-1").rstrip("\r")
                 if screenshots.take(line):
                     continue
-                print(line, flush=True)
+                print(prefix + line, flush=True)
                 log.write(line + "\n")
                 log.flush()
                 if line.strip() == DONE_MARKER:
@@ -560,6 +766,16 @@ def main() -> None:
     run_parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
                             help="an environment variable for the run, such as HALO_GPU_TRACE=1500 "
                                  "(D:\\environment.txt); repeatable")
+    link_parser = sub.add_parser("link", help="two Xboxes in a system link game (build/xbox/halo)")
+    link_parser.add_argument("map", help="the map the host plays, MAP[:VARIANT,...] (debug.network_test host:)")
+    link_parser.add_argument("--timeout", type=float, default=180)
+    link_parser.add_argument("--headless", action="store_true", help="no xemu windows (-display none)")
+    link_parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
+                             help="an environment variable for both machines; repeatable")
+    link_parser.add_argument("--host-env", action="append", default=[], metavar="NAME=VALUE",
+                             help="an environment variable for the host alone; repeatable")
+    link_parser.add_argument("--join-env", action="append", default=[], metavar="NAME=VALUE",
+                             help="an environment variable for the joining machine alone; repeatable")
     args = parser.parse_args()
     config = load_config()
     if args.command == "doctor":
@@ -567,6 +783,9 @@ def main() -> None:
     if args.command == "build":
         print(build(config, args.project.resolve()))
         return
+    if args.command == "link":
+        sys.exit(link(config, args.timeout, [f"HALO_NETWORK_TEST=host:{args.map}"] + args.host_env,
+                      ["HALO_NETWORK_TEST=join"] + args.join_env, args.env, args.headless))
     sys.exit(run(config, args.project.resolve(), args.timeout, args.headless, args.gdb, parse_presses(args.press),
             args.shot, run_environment(args), args.wav))
 
