@@ -22,8 +22,9 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .linux_build import (EXPAT_DIR, MUSL_MATH_DIR, TOML_DIR, XDK_INCLUDE, compile_launcher,
-                          game_defines_and_includes, game_sources, musl_math_sources, xdk_headers)
+from .linux_build import (EXPAT_DIR, MUSL_MATH_DIR, TOML_DIR, XDK_INCLUDE, ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES,
+                          compile_launcher, game_defines_and_includes, game_sources, musl_math_sources,
+                          xdk_headers)
 from .embed_assets import xbox_menu_inputs
 from .ninja_syntax import Writer
 from .windows_build import EXPAT_SOURCES, inline_export_wrapper
@@ -235,6 +236,9 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
     game_cflags = " ".join([
         abi, " ".join(GAME_FLAGS),
         f"-include {prefix_header}", f"-include {tags_header}",
+        # the headers of the port's own game units (port/linux/game), for the
+        # game sources that call them
+        f"-iquote {Path(linux_config['game_sources'])}",
         game_defines_and_includes(linux_config), libc_includes, f"-I{XDK_INCLUDE}",
     ])
     game_objects_start = len(objects)
@@ -248,7 +252,7 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
         abi, " ".join(PLATFORM_FLAGS),
         f"-include {prefix_header}", posix_includes,
         f"-I{PORT_DIR / 'src'}", f"-I{LINUX_DIR / 'src'}", "-Iport/include",
-        f"-I{TOML_DIR}", f"-I{EXPAT_DIR}", "-Isource -Isource/cseries",
+        f"-I{TOML_DIR}", f"-I{EXPAT_DIR}", f"-I{ZLIB_DIR}", "-Isource -Isource/cseries",
         libc_includes, f"-I{XDK_INCLUDE}",
         # pbkit's NV2A method names (nv_regs.h) for the Direct3D device
         # (d3d8_nv2a.c), searched last
@@ -308,6 +312,10 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
     add_object(menus, platform_cflags)
     # the settings file's parser (port_config.c)
     add_object(TOML_DIR / "tomlc17.c", " ".join([abi, "-std=gnu11", "-w", pdclib_includes]))
+    # the port's zlib (port/third_party/zlib/zlib_prefixed.h), which inflates
+    # the menus' pictures (png_decode.c)
+    for name in ZLIB_SOURCES:
+        add_object(ZLIB_DIR / name, " ".join([abi, "-std=gnu11", *ZLIB_DEFINES, "-U_WIN32", "-U_MSC_VER", "-w", pdclib_includes]))
     # the menus' XML parser (menu_files.c), built as on Windows (clang's
     # Microsoft target defines _WIN32): with nxdk's windows.h, and its hash
     # salt from nxdk's rand_s (its fallback's process id, which nxdk has no
