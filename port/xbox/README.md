@@ -294,24 +294,47 @@ cache's pages, so all 23 MB are one run the GPU reads. Only the BSP's buffer
 headers need room beside the models', kept for them, as a BSP that fails to
 load is fatal to the game.
 
+With `game.custom_edition_reduce_detail` (Xbox only, on by default), a map
+whose models do not fit at full detail is run with each permutation's high
+and super high levels of detail drawn from its medium geometry; maps that
+fit keep their full detail. When even that does not fit, each model geometry
+is read from the map, compressed and given buffers when it is first drawn,
+as Halo PC's geometry cache does: into a cache of the game's own kind
+(`lruv_cache.c`, the texture cache's), whose blocks go when their room is
+wanted, once the GPU has drawn from them (`custom_edition_model_geometry_ready`,
+called by `models.c` before a geometry is drawn). The cache is the room
+between the tags and the lowest structure BSP when that is 3 MB or more,
+else 4 MB the texture cache lends from its top (`texture_cache_lend_memory`);
+the structure BSPs' buffer headers are kept room at its start. A geometry
+the cache has no room for is not drawn that frame. Each part keeps where its
+vertices and strip lie in the map in its tag's empty blocks, and each
+geometry its block in its tag's padding, so the cache costs the heap
+nothing per part. The log has a line on the cache every 900 frames.
+
 A map is measured from a few reads of its file before a game starts for it
-(`custom_edition_cache_measure`, and the models walked when that is close):
-one whose geometry does not fit is left out of the map lists, and refused
-with a message when a host names it. With `game.custom_edition_reduce_detail`
-(Xbox only, on by default), a map whose models do not fit at full detail is
-run with each permutation's high and super high levels of detail drawn from
-its medium geometry, when that fits; maps that fit keep their full detail.
+(`custom_edition_cache_measure`; the resource maps' tags measured from their
+indexes when an allowance for them leaves no room): one whose tags would
+reach its structure BSPs is left out of the map lists, and refused with a
+message when a host names it. So are maps that fit but do not run well
+enough yet (`xbox_unsupported_maps` in `custom_edition_cache.c`).
 
 | Map | Models, compressed | Room | Runs (xemu, release) |
 | --- | --- | --- | --- |
-| Death Island, Infinity, Yoyorast Island | 3.4-3.6 MB | 11-13 MB | 25-27 fps |
+| Death Island, Infinity, Yoyorast Island | 3.4-3.6 MB | 11-13 MB | 25-30 fps |
 | Portent | 3.3 MB | 7.6 MB | 19 fps |
 | Chronopolis C3 | 7.6 MB | 9.1 MB | 17 fps (xemu's GPU-bound) |
 | cmt Snow Grove | 10.5 MB | 10.9 MB | 27 fps |
-| Hugeass | 11.3 MB (5.2 at medium) | 7.2 MB | 25 fps, medium detail |
-| Extinction | 10.4 MB (6.9) | 4.8 MB | not listed |
-| Coldsnap, Precipice, TSCE | 4.5-11.6 MB | 0-0.6 MB (12-16 MB BSPs) | not listed |
-| bigass v3 | 26.7 MB (12.8) | 4.8 MB | not listed |
+| Hugeass | 11.3 MB (5.2 at medium) | 7.2 MB | 25-30 fps, medium detail |
+| Extinction | 10.4 MB (6.9) | 5.3 MB | 30 fps, read when drawn (cache beside the tags) |
+| TSCE | 11.6 MB (9.0) | 0.1 MB (15 MB BSPs) | about 20 fps, read when drawn (cache lent); large textures garbled |
+| bigass v3 | 26.7 MB (12.8) | 5.5 MB | 10-22 fps, read when drawn; large textures garbled |
+| Coldsnap | 8.4 MB (6.3) | 1.2 MB (12.5 MB BSPs) | runs, under 3 fps: its scripts take the processor (trigger volume tests every tick) |
+| Precipice | 4.5 MB (2.6) | 0.2 MB (16 MB BSP) | not listed: its textures thrash the texture cache (3-4 fps) |
+
+A large uncompressed Custom Edition bitmap is swizzled through two heap
+buffers its own size (`rasterizer_swizzle.c`); with 2-3 MB of heap free in a
+map, those of 1.5 MB or more fail and are drawn unswizzled (TSCE, bigass,
+Precipice).
 
 The NV2A has no texture swizzle, so a Custom Edition multipurpose map (Halo
 PC's channel order) is read in its own order by the model shader instead:
