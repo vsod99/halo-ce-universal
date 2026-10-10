@@ -164,6 +164,15 @@ channels Halo PC keeps elsewhere (multipurpose maps and HUD meters), which
 the renderer is to sample in this build's order as their pixels arrive;
 FALSE after logging why it cannot. custom_edition_bitmaps_dispose forgets
 them either way. */
+/* The order of the channels of the bitmap a shader draws of `tag_index` for
+`sequence_index` (as rasterizer_set_texture picks it: the sequence index
+modulo the group's bitmaps), an enum custom_edition_channel_order: Halo PC's
+for a Custom Edition multipurpose map or HUD meter, else this build's. For a
+renderer that cannot sample a texture's channels in another order (the
+original Xbox's) and reads them in its shaders instead. */
+short custom_edition_bitmap_channel_order(
+	long tag_index,
+	long sequence_index);
 boolean custom_edition_reordered_bitmaps_find(
 	byte *tag_cache,
 	unsigned long loaded_bytes);
