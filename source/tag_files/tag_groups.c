@@ -116,8 +116,18 @@ void* tag_data_get_pointer(
 void *tag_block_get_element_with_size(
 	const struct tag_block *block,
 	long index, 
-	long element_size) 
+	long element_size)
 {
+#ifdef HALO_XBOX
+	/* port: on the Xbox an element inside its block is found before the
+	checks below, which it passes (the collision tests ask for one per
+	surface and edge) */
+	if (block && (unsigned long)index<(unsigned long)block->count && block->address &&
+		(!block->definition || block->definition->element_size==element_size))
+	{
+		return (byte *)block->address + index*element_size;
+	}
+#endif
 	match_assert("c:\\halo\\SOURCE\\tag_files\\tag_groups.c", 3084, block);
 	match_assert("c:\\halo\\SOURCE\\tag_files\\tag_groups.c", 3085, block->count>=0);
 	match_assert("c:\\halo\\SOURCE\\tag_files\\tag_groups.c", 3086, !block->definition || block->definition->element_size==element_size);

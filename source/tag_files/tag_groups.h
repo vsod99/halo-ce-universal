@@ -35,8 +35,13 @@ enum tag_field_type
 
 /* ---------- macros */
 
-/* port: tag_block_get_element_fast (below) */
+/* port: tag_block_get_element_fast (below); on the Xbox the call, but where
+a file takes TAG_BLOCK_GET_ELEMENT_INLINE */
+#ifdef HALO_XBOX
+#define TAG_BLOCK_GET_ELEMENT(block_address, index, type) ((type *)tag_block_get_element_with_size((block_address), (index), sizeof(type)))
+#else
 #define TAG_BLOCK_GET_ELEMENT(block_address, index, type) ((type *)tag_block_get_element_fast((block_address), (index), sizeof(type)))
+#endif
 
 /* ---------- structures */
 
@@ -143,6 +148,12 @@ static __inline__ void *tag_block_get_element_fast(
 	}
 	return tag_block_get_element_with_size(block, index, element_size);
 }
+#ifdef HALO_XBOX
+/* port: the Xbox takes tag_block_get_element_fast only where a file asks for
+it (the collision tests, which ask for an element per surface and edge);
+inline everywhere, it would cost the Xbox 64 KB */
+#define TAG_BLOCK_GET_ELEMENT_INLINE(block_address, index, type) ((type *)tag_block_get_element_fast((block_address), (index), sizeof(type)))
+#endif
 
 /* ---------- prototypes/CACHE_FILES.C */
 
