@@ -72,6 +72,35 @@ float halo_screen_scale(void)
 	return 1.0f;
 }
 
+/* ---------- the shape of the screen's pixels
+
+The 640x480 picture fills a 4:3 television, or is stretched across a 16:9
+one (anamorphic, as the Xbox's games drew for widescreen televisions): each
+pixel then shows a third wider than it is tall. display.widescreen chooses;
+"auto" follows the console's video setting, which its dashboard sets. The
+camera widens its horizontal field of view to match (render_cameras.c); the
+menus and HUD, laid out for 640 columns, stretch with the picture. The
+setting is read again when the settings change. */
+
+static float pixel_aspect;
+static unsigned long pixel_aspect_read_at;
+
+float halo_screen_pixel_aspect(void)
+{
+	if (!pixel_aspect || pixel_aspect_read_at != config_changes())
+	{
+		const char *setting = config_string("display.widescreen");
+		BOOL widescreen = !strcmp(setting, "on") || (strcmp(setting, "off") && xbox_video_widescreen());
+		float aspect = widescreen ? 4.0f / 3.0f : 1.0f;
+
+		pixel_aspect_read_at = config_changes();
+		if (aspect != pixel_aspect)
+			platform_log("screen: %s", widescreen ? "16:9 (anamorphic)" : "4:3");
+		pixel_aspect = aspect;
+	}
+	return pixel_aspect;
+}
+
 /* ---------- the GL renderer's own passes (port/linux/src/d3d8_gl.c): the
 Xbox's shadow maps at its own size, no antialiasing pass after the 3D view,
 and its vertex shaders lit as written */

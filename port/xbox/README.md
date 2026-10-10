@@ -114,6 +114,15 @@ texture layout without OpenGL is `texture_layout.c`. The game's own log
 (debug.txt, on the read-only D: here) goes to COM2 with the rest, its lines
 marked `debug.txt:`.
 
+The picture is 640x480: 480p where the console's video setting allows it
+and the cable carries it (nxdk chooses the mode), else 480i. A widescreen
+television stretches it across 16:9, as it did the Xbox's games;
+`display.widescreen` (`"auto"`, the default, follows the console's video
+setting, which its dashboard sets; `"on"`; `"off"`) widens the 3D view to
+match (`halo_screen_pixel_aspect`, `source/render/render_cameras.c`). The
+menus and HUD, laid out for 640 columns, stretch with the picture. The log's
+`GPU: pbkit started` line gives the console's setting.
+
 `debug.start_map` (`--env HALO_START_MAP=b30`) starts a map the menus do not
 reach a few seconds into the main menu: a campaign level at normal, any
 other map (`bloodgulch`, `bloodgulch:ctf`) as a one-player split screen game.
