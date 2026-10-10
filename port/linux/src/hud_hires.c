@@ -25,6 +25,9 @@ RGBA, non-interlaced PNGs are read (png_decode.c).
 #include "port_config.h"
 #include "xgpu.h"
 
+/* (crc32: the embedded textures' check) */
+#include "zlib_prefixed.h"
+
 #include <stdlib.h>
 #include <string.h>
 
