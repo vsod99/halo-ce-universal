@@ -17,6 +17,10 @@ template is port/xbox/xemu.example.toml): nxdk, xemu, and the console files
 xemu boots with (MCPX boot ROM, flash BIOS, EEPROM, hard disk image), which
 must be dumped from your own console and are never committed.
 
+On Windows the runner is Windows's Python, beside a Windows xemu, and the
+build's tools (make, ninja, nxdk, LLVM) are a WSL distribution's: [tools]
+wsl names it, and the build's [tools] paths are Linux's.
+
 `run --press 20:a,start` presses controller buttons in xemu's window, the
 seconds after the program's first log line: xemu plays its keyboard as the
 controller in port 1, and the keys are sent with System Events (macOS: the
@@ -45,7 +49,7 @@ import tempfile
 import threading
 import time
 import zlib
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
 LOCAL_CONFIG = ROOT / "port/xbox/xemu.local.toml"
@@ -87,13 +91,50 @@ def expand(path: str) -> Path:
     return Path(os.path.expanduser(path))
 
 
+def wsl(config: dict) -> str:
+    """the WSL distribution the build runs in when the runner is Windows's
+    ([tools] wsl): nxdk, LLVM and the build are Linux's there, and xemu
+    Windows's own, beside the runner (WSL's sockets do not reach Windows's
+    127.0.0.1)"""
+    return config["tools"].get("wsl", "") if os.name == "nt" else ""
+
+
+def tool(config: dict, key: str, default: str = "") -> PurePath:
+    """a [tools] path of the build's: Linux's as written under WSL"""
+    value = config["tools"].get(key, default)
+    return PurePosixPath(value) if wsl(config) else expand(value)
+
+
+def tool_path(config: dict, path: Path) -> str:
+    """a path of this machine's as the build's tools see it: under WSL,
+    C:\\x as /mnt/c/x"""
+    if not wsl(config):
+        return str(path)
+    path = Path(path).resolve()
+    return f"/mnt/{path.drive[0].lower()}{path.as_posix()[2:]}"
+
+
+def tool_command(config: dict, command: list) -> tuple:
+    """a build tool's command and environment (nxdk's NXDK_DIR, its bin and
+    LLVM on the PATH), run in WSL under Windows"""
+    env = nxdk_environment(config)
+    if not wsl(config):
+        return command, env
+    return (["wsl.exe", "-d", wsl(config), "--cd", tool_path(config, ROOT), "--", "env",
+             f"NXDK_DIR={env['NXDK_DIR']}", f"PATH={env['PATH']}", *command], dict(os.environ))
+
+
 def nxdk_environment(config: dict) -> dict:
-    nxdk = expand(config["tools"]["nxdk"])
-    llvm = expand(config["tools"].get("llvm_bin", "/opt/homebrew/opt/llvm/bin"))
-    lld = expand(config["tools"].get("lld_bin", "/opt/homebrew/opt/lld/bin"))
+    nxdk = tool(config, "nxdk", config["tools"]["nxdk"])
+    llvm = tool(config, "llvm_bin", "/opt/homebrew/opt/llvm/bin")
+    lld = tool(config, "lld_bin", "/opt/homebrew/opt/lld/bin")
     env = dict(os.environ)
     env["NXDK_DIR"] = str(nxdk)
-    env["PATH"] = os.pathsep.join([str(nxdk / "bin"), str(llvm), str(lld), env.get("PATH", "")])
+    if wsl(config):
+        # (WSL's own PATH, without the Windows folders it adds)
+        env["PATH"] = ":".join([str(nxdk / "bin"), str(llvm), str(lld), "/usr/local/bin:/usr/bin:/bin"])
+    else:
+        env["PATH"] = os.pathsep.join([str(nxdk / "bin"), str(llvm), str(lld), env.get("PATH", "")])
     return env
 
 
@@ -154,14 +195,15 @@ def build(config: dict, project: Path, environment: list = ()) -> Path:
     memory limit to the configured console's, and pack bin/ into an ISO;
     returns the ISO"""
     jobs = str(os.cpu_count() or 4)
-    env = nxdk_environment(config)
     if (project / "Makefile").is_file():
-        command = ["make", "-C", str(project), "-j", jobs]
+        command = ["make", "-C", tool_path(config, project), "-j", jobs]
     elif project == ROOT / "build/xbox/halo":
-        command = ["ninja", "-C", str(ROOT), "xbox"]
+        command = ["ninja", "-C", tool_path(config, ROOT), "xbox"]
     else:
         sys.exit(f"{project} is neither an nxdk project (no Makefile) nor build/xbox/halo")
-    result = subprocess.run(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    command, env = tool_command(config, command)
+    result = subprocess.run(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                            encoding="utf-8", errors="replace")
     lines = [line for line in result.stdout.splitlines()
              if not line.startswith(("[ CC", "[ CXX", "[ AS")) and " XBOX CC " not in line]
     if result.returncode != 0:
@@ -174,16 +216,16 @@ def build(config: dict, project: Path, environment: list = ()) -> Path:
 
 def pack(config: dict, project: Path, environment: list, name: str) -> Path:
     """the project's bin/ with the environment as build/xbox/NAME.iso"""
-    env = nxdk_environment(config)
     bin_dir = project / "bin"
     write_environment(bin_dir, list(environment))
     set_memory_limit(bin_dir / "default.xbe", config["console"].get("memory", "128") != "128")
     iso = ROOT / "build/xbox" / f"{name}.iso"
     iso.parent.mkdir(parents=True, exist_ok=True)
     iso.unlink(missing_ok=True)
-    extract_xiso = Path(env["NXDK_DIR"]) / "tools/extract-xiso/build/extract-xiso"
-    result = subprocess.run([str(extract_xiso), "-c", str(bin_dir), str(iso)],
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    extract_xiso = tool(config, "nxdk", config["tools"]["nxdk"]) / "tools/extract-xiso/build/extract-xiso"
+    command, env = tool_command(config, [str(extract_xiso), "-c", tool_path(config, bin_dir), tool_path(config, iso)])
+    result = subprocess.run(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                            encoding="utf-8", errors="replace")
     if result.returncode != 0 or not iso.is_file():
         print(result.stdout)
         sys.exit(f"packing {bin_dir} failed")
@@ -525,14 +567,16 @@ class Sampler:
         (self.out / "samples.json").write_text(json.dumps(self.samples))
         # (return addresses are symbolized at the call: the byte before them)
         stacks = [[stack[0]] + [address - 1 for address in stack[1:]] for stack in self.samples]
-        symbolizer = expand(self.config["tools"].get("llvm_bin", "/opt/homebrew/opt/llvm/bin")) / "llvm-symbolizer"
+        symbolizer = tool(self.config, "llvm_bin", "/opt/homebrew/opt/llvm/bin") / "llvm-symbolizer"
         addresses = sorted({address for stack in stacks for address in stack if address < 0x80000000})
         names = {}
         if addresses:
-            result = subprocess.run([str(symbolizer), "--output-style=JSON", "--no-inlines", "--relative-address",
-                                     f"--obj={ROOT / 'build/xbox/halo.exe'}"],
+            command, env = tool_command(self.config, [
+                str(symbolizer), "--output-style=JSON", "--no-inlines", "--relative-address",
+                f"--obj={tool_path(self.config, ROOT / 'build/xbox/halo.exe')}"])
+            result = subprocess.run(command, env=env,
                                     input="\n".join(hex(address - 0x10000) for address in addresses),
-                                    stdout=subprocess.PIPE, text=True)
+                                    stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
             entries = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
             for address, entry in zip(addresses, entries):
                 symbol = (entry.get("Symbol") or [{}])[0]
@@ -954,9 +998,13 @@ def link(config: dict, timeout: float, host_environment: list, join_environment:
     def start(index: int) -> None:
         name = names[index]
         files = {}
-        # (APFS clones: instant, the image itself untouched)
+        # (APFS clones: instant, the image itself untouched; elsewhere a
+        # reflink where the file system has them, on Windows a copy)
         disk = out / f"{name}-hdd.qcow2"
-        if subprocess.run(["cp", "-c", str(expand(console["hdd_path"])), str(disk)]).returncode != 0:
+        if os.name == "nt":
+            shutil.copyfile(expand(console["hdd_path"]), disk)
+        elif subprocess.run(["cp", "-c" if sys.platform == "darwin" else "--reflink=auto",
+                             str(expand(console["hdd_path"])), str(disk)]).returncode != 0:
             sys.exit(f"cloning {console['hdd_path']} failed")
         files["hdd_path"] = str(disk)
         files["eeprom_path"] = str(out / f"{name}-eeprom.bin")
@@ -1103,17 +1151,28 @@ def stream_log(connection: socket.socket, path: Path, process: subprocess.Popen,
 def doctor(config: dict) -> int:
     ok = True
     tools = config["tools"]
-    checks = [
-        ("nxdk", expand(tools.get("nxdk", "")) / "Makefile"),
-        ("clang", expand(tools.get("llvm_bin", "/opt/homebrew/opt/llvm/bin")) / "clang"),
-        ("lld-link", expand(tools.get("lld_bin", "/opt/homebrew/opt/lld/bin")) / "lld-link"),
-        ("xemu", expand(tools.get("xemu", "/Applications/xemu.app/Contents/MacOS/xemu"))),
+    build_tools = [
+        ("nxdk", tool(config, "nxdk") / "Makefile"),
+        ("clang", tool(config, "llvm_bin", "/opt/homebrew/opt/llvm/bin") / "clang"),
+        ("lld-link", tool(config, "lld_bin", "/opt/homebrew/opt/lld/bin") / "lld-link"),
     ]
+    if wsl(config):
+        # (the build's tools are WSL's: looked for there)
+        nxdk_tools = tool(config, "nxdk") / "tools"
+        build_tools += [("make", PurePosixPath("/usr/bin/make")), ("ninja", PurePosixPath("/usr/bin/ninja")),
+                        ("cxbe", nxdk_tools / "cxbe/cxbe"),
+                        ("extract-xiso", nxdk_tools / "extract-xiso/build/extract-xiso")]
+    checks = [(name, path, (lambda path: subprocess.run(["wsl.exe", "-d", wsl(config), "--", "test", "-e",
+                                                         str(path)]).returncode == 0)
+               if wsl(config) else Path.exists) for name, path in build_tools]
+    checks.append(("xemu", expand(tools.get("xemu", "/Applications/xemu.app/Contents/MacOS/xemu")), Path.exists))
     for key in ("bootrom_path", "flashrom_path", "eeprom_path", "hdd_path"):
         value = config["console"].get(key)
-        checks.append((f"console.{key}", expand(value) if value else None))
-    for name, path in checks:
-        present = path is not None and path.exists()
+        checks.append((f"console.{key}", expand(value) if value else None, Path.exists))
+    if wsl(config):
+        print(f"build: in WSL ({wsl(config)})")
+    for name, path, exists in checks:
+        present = path is not None and exists(path)
         ok &= present or name == "console.eeprom_path"  # xemu makes an EEPROM if none
         print(f"{'ok ' if present else 'MISSING'} {name}: {path or '(not set)'}")
     print(f"memory: {config['console'].get('memory', '128')} MB")
@@ -1235,6 +1294,12 @@ def main() -> None:
         sys.exit(link(config, args.timeout, [f"HALO_NETWORK_TEST=host:{args.map}"] + args.host_env,
                       ["HALO_NETWORK_TEST=join"] + args.join_env, args.env, args.headless, args.internet,
                       args.forward, args.upnp))
+    if sys.platform != "darwin":
+        mac_only = [flag for flag, used in (("--press", args.press), ("--shot", args.shot), ("--listen", args.listen))
+                    if used]
+        if mac_only:
+            sys.exit(f"{', '.join(mac_only)}: macOS only (System Events, screencapture, Swift); "
+                     "--input presses buttons from inside the game, --frames saves frames, --wav records the sound")
     sys.exit(run(config, args.project.resolve(), args.timeout, args.headless, args.gdb, parse_presses(args.press),
             args.shot, run_environment(args), args.wav, args.listen, args.router_forward,
             args.profile))
