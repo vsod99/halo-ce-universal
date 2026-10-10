@@ -31,6 +31,9 @@ void xbox_memory_report(const char *when);
 tag cache's pages, when there are Custom Edition maps
 (cache/physical_memory_map.c; nxdk_memory.c) */
 void xbox_custom_edition_tag_cache_map(void *tag_cache, unsigned long tag_cache_bytes);
+/* the bytes of that window the GPU reads at the Xbox tag cache's address on
+(all 23 MB once it is made, else none) */
+unsigned long xbox_custom_edition_tag_cache_gpu_bytes(void);
 
 /* the controllers (nxdk_gamepads.c, for xinput_xbox.c) */
 /* (a report is an XINPUT_GAMEPAD's bytes) */
