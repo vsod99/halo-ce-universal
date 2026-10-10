@@ -131,12 +131,27 @@ static void write_to_debug_file(
 	char prefix[32];
 
 #ifdef HALO_XBOX
-	/* d: is the disc there: the lines go to the log (COM2) instead */
+	/* d: is the disc there: the lines go to the log (COM2) instead, a line
+	repeated at once counted rather than sent again (a Custom Edition map's
+	'an object or light spanned 81 clusters' each frame held Chronopolis to
+	4 fps: the serial port is slow) */
 	{
 		extern void platform_log(const char *format, ...);
+		static char previous[256];
+		static long repeats;
 
 		(void)file;
 		(void)date;
+		if (!strncmp(string, previous, sizeof(previous) - 1) && strlen(string) < sizeof(previous))
+		{
+			repeats++;
+			return;
+		}
+		if (repeats)
+			platform_log("debug.txt: (the line before %ld more times)", repeats);
+		repeats = 0;
+		strncpy(previous, string, sizeof(previous) - 1);
+		previous[sizeof(previous) - 1] = '\0';
 		platform_log("debug.txt: %s", string);
 		return;
 	}
