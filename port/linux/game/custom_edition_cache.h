@@ -71,6 +71,13 @@ the Custom Edition maps folders alone, never from the game's own. */
 boolean custom_edition_level_name(
 	char const *level_name);
 
+/* Whether the map `map_name` names (a level name or a file name) fits this
+platform's memory: on the original Xbox, whether its geometry fits beside
+its tags (custom_edition_cache.c); TRUE elsewhere, and when it cannot be
+read. */
+boolean custom_edition_cache_fits_platform(
+	char const *map_name);
+
 /* TRUE when Custom Edition maps may run (game.custom_edition) and the level
 `level_name` is a Custom Edition map's whose file is a Custom Edition cache:
 it is then read in place, never copied to the cache partition. */
@@ -264,17 +271,5 @@ boolean custom_edition_structure_bsp_load(
 	struct structure_bsp *structure_bsp);
 void custom_edition_structure_bsp_unload(
 	void);
-
-#ifdef HALO_XBOX
-/* The original Xbox's room for geometry: from `start` to `end`, in the Xbox
-tag cache, which the Custom Edition tag cache's pages are
-(custom_edition_geometry.c) */
-void custom_edition_geometry_span_set(
-	void *start,
-	void *end);
-/* moves its end, keeping the geometry made in it */
-void custom_edition_geometry_span_extend(
-	void *end);
-#endif
 
 #endif

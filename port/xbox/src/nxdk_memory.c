@@ -283,6 +283,9 @@ no other allocation shares their page tables. */
 int config_boolean(const char *name);
 
 static void *custom_edition_tag_cache = NULL;
+/* the bytes of it the GPU reads at the Xbox tag cache's address on (all of
+it, once made) */
+static unsigned long custom_edition_tag_cache_gpu_bytes = 0;
 
 static volatile unsigned long *page_directory_entry(unsigned long address)
 {
@@ -341,14 +344,28 @@ void xbox_custom_edition_tag_cache_map(void *tag_cache, unsigned long tag_cache_
 		platform_log("custom edition: cannot reserve %08lx-%08lx: Custom Edition maps cannot run", first, end);
 		return;
 	}
+	/* (the last megabyte where the tag cache's pages end, so that the whole
+	window is one run of physical memory, which the GPU reads at the tag
+	cache's address on: structure BSPs load to the top, and their vertices
+	are compressed where they lie, custom_edition_geometry.c) */
+	{
+		unsigned long tag_cache_end = (unsigned long)MmGetPhysicalAddress((unsigned char *)tag_cache + tag_cache_bytes - 1) + 1;
+
+		extra = extra_bytes ?
+			MmAllocateContiguousMemoryEx(extra_bytes, tag_cache_end, tag_cache_end + extra_bytes - 1, PAGE_BYTES, PAGE_READWRITE) :
+			NULL;
+		custom_edition_tag_cache_gpu_bytes = extra ? CUSTOM_EDITION_TAG_CACHE_BYTES : tag_cache_bytes;
+	}
 	tables = MmAllocateContiguousMemoryEx(page_tables * PAGE_BYTES, 0, 0xFFFFFFFF, PAGE_BYTES, PAGE_READWRITE);
-	extra = extra_bytes ? MmAllocateContiguousMemoryEx(extra_bytes, 0, 0xFFFFFFFF, PAGE_BYTES, PAGE_READWRITE) : NULL;
 	if (!tables || (extra_bytes && !extra))
 	{
-		platform_log("custom edition: no memory for the tag cache's last %lu KB: Custom Edition maps cannot run",
+		platform_log("custom edition: no memory for the tag cache's last %lu KB after its pages: Custom Edition maps cannot run",
 			extra_bytes / 1024);
 		if (tables)
 			MmFreeContiguousMemory(tables);
+		if (extra)
+			MmFreeContiguousMemory(extra);
+		custom_edition_tag_cache_gpu_bytes = 0;
 		return;
 	}
 	memset(tables, 0, page_tables * PAGE_BYTES);
@@ -389,8 +406,13 @@ void xbox_custom_edition_tag_cache_map(void *tag_cache, unsigned long tag_cache_
 		}
 	}
 	custom_edition_tag_cache = (void *)CUSTOM_EDITION_TAG_CACHE_ADDRESS;
-	platform_log("custom edition: the tag cache at %08lx is the Xbox tag cache's pages and %lu KB more",
+	platform_log("custom edition: the tag cache at %08lx is the Xbox tag cache's pages and the %lu KB after them",
 		CUSTOM_EDITION_TAG_CACHE_ADDRESS, extra_bytes / 1024);
+}
+
+unsigned long xbox_custom_edition_tag_cache_gpu_bytes(void)
+{
+	return custom_edition_tag_cache_gpu_bytes;
 }
 
 void *halo_custom_edition_tag_cache(void)

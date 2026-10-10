@@ -77,6 +77,7 @@ cache_files_structures.hpp, s_cache_tag_header and s_cache_tag_instance) */
 #define TAG_INDEX_SCENARIO_OFFSET 0x04
 #define TAG_INDEX_CHECKSUM_OFFSET 0x08
 #define TAG_INDEX_COUNT_OFFSET 0x0C
+#define TAG_INDEX_MODEL_PART_COUNT_OFFSET 0x10
 #define TAG_INDEX_VERTEX_DATA_OFFSET_OFFSET 0x14
 #define TAG_INDEX_INDEX_DATA_OFFSET_OFFSET 0x1C
 #define TAG_INDEX_MODEL_DATA_SIZE_OFFSET 0x20
@@ -2124,6 +2125,84 @@ void resource_map_close(
 	map->item_count = 0;
 
 	return;
+}
+
+
+enum cache_file_status custom_edition_cache_measure(
+	struct cache_file_source const *source,
+	struct cache_file_identity const *identity,
+	struct custom_edition_measure *measure)
+{
+	uint8_t tag_index[TAG_INDEX_BYTES];
+	uint8_t instance[TAG_INSTANCE_BYTES];
+	uint8_t block[TAG_BLOCK_COUNT_OFFSET + 8];
+	uint8_t references[MAXIMUM_STRUCTURE_BSPS_PER_SCENARIO * STRUCTURE_BSP_REFERENCE_BYTES];
+	uint32_t instances_address;
+	uint32_t scenario_handle;
+	uint32_t scenario_address;
+	uint32_t address;
+	int32_t tag_count;
+	int32_t count;
+	int32_t index;
+
+	memset(measure, 0, sizeof(*measure));
+	if (identity->format != _cache_file_format_custom_edition_cache || identity->tag_data_size < TAG_INDEX_BYTES ||
+		!source->read(source->context, identity->tag_data_offset, TAG_INDEX_BYTES, tag_index) ||
+		read_u32(tag_index + TAG_INDEX_SIGNATURE_OFFSET) != TAG_INDEX_SIGNATURE)
+	{
+		return _cache_file_status_bad_tag_index_signature;
+	}
+	measure->tag_data_bytes = identity->tag_data_size;
+	measure->model_data_bytes = read_u32(tag_index + TAG_INDEX_MODEL_DATA_SIZE_OFFSET);
+	measure->model_index_data_offset = read_u32(tag_index + TAG_INDEX_INDEX_DATA_OFFSET_OFFSET);
+	measure->model_part_count = read_s32(tag_index + TAG_INDEX_MODEL_PART_COUNT_OFFSET);
+	if (measure->model_index_data_offset > measure->model_data_bytes || measure->model_part_count < 0)
+	{
+		return _cache_file_status_bad_model_data_range;
+	}
+
+	/* (an address in the tag data, as a file offset) */
+#define MEASURE_FILE_OFFSET(address, size) \
+	((address) >= CUSTOM_EDITION_TAG_CACHE_ADDRESS && \
+		range_fits((address) - CUSTOM_EDITION_TAG_CACHE_ADDRESS, (size), identity->tag_data_size))
+	instances_address = read_u32(tag_index + TAG_INDEX_INSTANCES_OFFSET);
+	scenario_handle = read_u32(tag_index + TAG_INDEX_SCENARIO_OFFSET);
+	tag_count = read_s32(tag_index + TAG_INDEX_COUNT_OFFSET);
+	address = instances_address + (scenario_handle & ABSOLUTE_INDEX_MASK) * TAG_INSTANCE_BYTES;
+	if (tag_count <= 0 || (scenario_handle & ABSOLUTE_INDEX_MASK) >= (uint32_t)tag_count ||
+		!MEASURE_FILE_OFFSET(address, TAG_INSTANCE_BYTES) ||
+		!source->read(source->context, identity->tag_data_offset + address - CUSTOM_EDITION_TAG_CACHE_ADDRESS,
+			TAG_INSTANCE_BYTES, instance))
+	{
+		return _cache_file_status_bad_tag_instances_range;
+	}
+	scenario_address = read_u32(instance + TAG_INSTANCE_ADDRESS_OFFSET) + SCENARIO_STRUCTURE_BSPS_OFFSET;
+	if (!MEASURE_FILE_OFFSET(scenario_address, sizeof(block)) ||
+		!source->read(source->context, identity->tag_data_offset + scenario_address - CUSTOM_EDITION_TAG_CACHE_ADDRESS,
+			sizeof(block), block))
+	{
+		return _cache_file_status_bad_structure_bsp_block;
+	}
+	count = read_s32(block + TAG_BLOCK_COUNT_OFFSET);
+	address = read_u32(block + TAG_BLOCK_ADDRESS_OFFSET);
+	if (count < 0 || count > MAXIMUM_STRUCTURE_BSPS_PER_SCENARIO ||
+		(count && (!MEASURE_FILE_OFFSET(address, (uint32_t)count * STRUCTURE_BSP_REFERENCE_BYTES) ||
+			!source->read(source->context, identity->tag_data_offset + address - CUSTOM_EDITION_TAG_CACHE_ADDRESS,
+				(uint32_t)count * STRUCTURE_BSP_REFERENCE_BYTES, references))))
+	{
+		return _cache_file_status_bad_structure_bsp_block;
+	}
+#undef MEASURE_FILE_OFFSET
+	for (index = 0; index < count; index++)
+	{
+		uint32_t bsp_address = read_u32(references + (uint32_t)index * STRUCTURE_BSP_REFERENCE_BYTES +
+			STRUCTURE_BSP_REFERENCE_ADDRESS_OFFSET);
+
+		if (!measure->lowest_structure_bsp_address || bsp_address < measure->lowest_structure_bsp_address)
+			measure->lowest_structure_bsp_address = bsp_address;
+	}
+
+	return _cache_file_status_ok;
 }
 
 enum cache_file_status custom_edition_cache_load(

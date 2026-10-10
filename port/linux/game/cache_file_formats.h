@@ -359,6 +359,27 @@ enum cache_file_status resource_map_open(
 void resource_map_close(
 	struct resource_map *map);
 
+/* What a Custom Edition cache needs of its tag cache, read from a few small
+parts of the file (its tag index, its scenario's structure BSP references)
+without loading it: a platform with little memory refuses a map that will
+not fit before a game is started for it. Every value is checked only as far
+as the reads need; custom_edition_cache_load checks the rest. */
+struct custom_edition_measure
+{
+	uint32_t tag_data_bytes;
+	/* the model data: its vertices (the index data's offset) and indices */
+	uint32_t model_data_bytes;
+	uint32_t model_index_data_offset;
+	int32_t model_part_count;
+	/* the lowest address a structure BSP loads to; 0 when there are none */
+	uint32_t lowest_structure_bsp_address;
+};
+
+enum cache_file_status custom_edition_cache_measure(
+	struct cache_file_source const *source,
+	struct cache_file_identity const *identity,
+	struct custom_edition_measure *measure);
+
 /* Loads a Custom Edition cache into `tag_cache`, which stands for the
 `tag_cache_bytes` bytes at CUSTOM_EDITION_TAG_CACHE_ADDRESS and must be at
 least CUSTOM_EDITION_TAG_CACHE_BYTES long. The map's tag data is copied to
