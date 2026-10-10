@@ -132,52 +132,67 @@ static uint32_t gpu_get(void)
 	return *(volatile uint32_t *)(VIDEO_BASE + 0x00800044) & 0x03ffffff;
 }
 
-/* the end of what the device wrote, and of what the GPU was told of: as
-the SDK's Direct3D, the GPU hears of new methods now and then (each telling
-is a cache flush and register accesses), not at each block */
-static uint32_t *write_end, *kicked_end;
+/* the end of what the device wrote, how far it may write without a look at
+the GPU (xbox_gpu_begin's test, inline in the device), and where the GPU is
+told of it next: as the SDK's Direct3D, the GPU hears of new methods now
+and then (each telling is a cache flush and register accesses), not at each
+block */
+struct xbox_gpu_push xbox_gpu_push;
+
+static uint32_t *kicked_end;
 
 /* the GPU told of all written, before a wait on it or pbkit's own methods */
 void xbox_gpu_kick(void)
 {
+	uint32_t *write_end = (uint32_t *)xbox_gpu_push.write_end;
+
 	if (write_end != kicked_end)
 	{
 		pb_end(write_end);
 		kicked_end = write_end;
 	}
+	xbox_gpu_push.kick_end = (unsigned long *)(kicked_end + KICK_BYTES / 4);
+}
+
+/* a new place to write from (pbkit's, after a flip): nothing known free */
+static void push_restart(uint32_t *p)
+{
+	xbox_gpu_push.write_end = (unsigned long *)p;
+	xbox_gpu_push.room_end = NULL;
+	kicked_end = p;
+	xbox_gpu_push.kick_end = (unsigned long *)(p + KICK_BYTES / 4);
 }
 
 /* until the GPU has read what lies from p to p+dwords (and the margin
 after it, for pbkit's own methods at the flips). Behind p it reads this
-lap, ahead of p what is left of the last one */
-static uint32_t room_limit;
-
-static void gpu_wait_room(const uint32_t *p, unsigned long dwords)
+lap, ahead of p what is left of the last one. The room it leaves is free
+until the device writes past it: the GPU's read position only moves on (a
+register read is costly, in xemu above all) */
+static void gpu_wait_room(uint32_t *p, unsigned long dwords)
 {
+	uint32_t *tail = push_buffer_head + PUSH_BUFFER_BYTES / 4 - PUSH_BUFFER_MARGIN - 1;
 	uint32_t start = (uint32_t)p & 0x03ffffff;
 	uint32_t end = start + (dwords + PUSH_BUFFER_MARGIN) * 4;
 	uint32_t get;
 	unsigned long long started;
 
-	/* the GPU's read position only moves on: the room it left at the last
-	look is still free (a register read is costly, in xemu above all) */
-	if (end <= room_limit)
-		return;
 	started = wait_start();
 	while ((get = gpu_get()) > start && get < end)
 		;
 	wait_end(started);
 	/* behind p, it reads this lap: free to the buffer's end */
-	room_limit = get > start ? get : 0xffffffff;
+	xbox_gpu_push.room_end = (unsigned long *)(get > start ? p + (get - start) / 4 - PUSH_BUFFER_MARGIN : tail);
+	if (xbox_gpu_push.room_end > (unsigned long *)tail)
+		xbox_gpu_push.room_end = (unsigned long *)tail;
 }
 
-unsigned long *xbox_gpu_begin(unsigned long dwords)
+unsigned long *xbox_gpu_begin_room(unsigned long dwords)
 {
 	uint32_t *p;
 
-	if (!write_end)
-		write_end = kicked_end = pb_begin();
-	p = write_end;
+	if (!xbox_gpu_push.write_end)
+		push_restart(pb_begin());
+	p = (uint32_t *)xbox_gpu_push.write_end;
 	/* past the end: a jump back to the head, as pb_reset writes, without
 	its wait for the GPU to read up to it. It reads this lap here (at or
 	behind p), so the head is free once it is past the room asked for */
@@ -195,18 +210,11 @@ unsigned long *xbox_gpu_begin(unsigned long dwords)
 		wait_end(started);
 		*p = head | 1;
 		pb_end(push_buffer_head);
-		p = write_end = kicked_end = push_buffer_head;
-		room_limit = 0;
+		p = push_buffer_head;
+		push_restart(p);
 	}
 	gpu_wait_room(p, dwords);
 	return (unsigned long *)p;
-}
-
-void xbox_gpu_end(unsigned long *end)
-{
-	write_end = (uint32_t *)end;
-	if ((unsigned long)(write_end - kicked_end) * 4 >= KICK_BYTES)
-		xbox_gpu_kick();
 }
 
 int xbox_gpu_busy(void)
@@ -255,8 +263,7 @@ void xbox_gpu_present(void)
 	while (pb_finished())
 		NtYieldExecution();
 	wait_end(started);
-	write_end = kicked_end = pb_begin();
-	room_limit = 0;
+	push_restart(pb_begin());
 }
 
 unsigned long xbox_gpu_wait_vertical_blank(void)
