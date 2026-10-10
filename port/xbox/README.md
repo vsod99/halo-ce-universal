@@ -28,6 +28,38 @@ Microsoft SDK). Until the console is ready, everything runs in
    ([xemu-hdd-image](https://github.com/xemu-project/xemu-hdd-image/releases)).
 4. `python3 tools/xbox_dev.py doctor` checks it.
 
+## Setup (Windows)
+
+The build is Linux's, in WSL; `tools/xbox_dev.py` runs in Windows's Python
+beside Windows's xemu (WSL's sockets do not reach Windows's 127.0.0.1, and
+xemu draws with the GPU), and runs make, ninja, extract-xiso and
+llvm-symbolizer in WSL by `wsl.exe`.
+
+1. In WSL Ubuntu: LLVM 18 (from [apt.llvm.org](https://apt.llvm.org) on
+   22.04: `sudo bash llvm.sh 18`) and
+   `sudo apt install clang-18 lld-18 llvm-18 ninja-build make cmake g++ bison flex`.
+   (If installing them leaves WSL unable to start Windows programs, "Exec
+   format error": `echo ':WSLInterop:M::MZ::/init:PF' | sudo tee
+   /usr/lib/binfmt.d/WSLInterop.conf`, and `systemd-binfmt` not masked.)
+2. nxdk in WSL, at CI's commit (`.github/workflows/build.yml`), its
+   libraries optimized as above, with cxbe and extract-xiso:
+
+       git clone https://github.com/XboxDev/nxdk ~/source/repos/nxdk && cd ~/source/repos/nxdk
+       git checkout <NXDK_COMMIT> && git submodule update --init --recursive
+       NXDK_DIR=$PWD PATH=$PWD/bin:/usr/lib/llvm-18/bin:/usr/bin:/bin \
+         make -B CFLAGS=-O2 cxbe extract-xiso $(for l in libpdclib libwinapi libxboxrt libnxdk libnxdk_hal \
+           libpbkit nxdk_usb libnxdk_automount_d xboxkrnl/libxboxkrnl; do echo $PWD/lib/$l.lib; done)
+
+3. [xemu](https://github.com/xemu-project/xemu/releases) for Windows.
+4. `port/xbox/xemu.local.toml` as in the template, with `wsl` naming the
+   distribution: `[tools]`'s nxdk and LLVM paths are WSL's (absolute, no
+   `~`), the xemu, console and maps paths Windows's.
+5. `python3 configure.py` in WSL (the build's paths are Linux's), then
+   `python tools/xbox_dev.py doctor` and `run` from Windows.
+
+`--press`, `--shot` and `--listen` are macOS's; `--input`, `--frames` and
+`--wav` do the same from inside the game.
+
 ## The game's build
 
 `python3 configure.py` adds the Xbox build when it finds nxdk (the path in

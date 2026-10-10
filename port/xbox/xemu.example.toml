@@ -5,6 +5,9 @@ nxdk = "~/source/repos/nxdk"                         # git clone --recursive htt
 llvm_bin = "/opt/homebrew/opt/llvm/bin"              # brew install llvm
 lld_bin = "/opt/homebrew/opt/lld/bin"                # brew install lld
 xemu = "/Applications/xemu.app/Contents/MacOS/xemu"  # brew install --cask xemu
+# Windows: the build in WSL (port/xbox/README.md), nxdk and LLVM above as its
+# absolute Linux paths, xemu and the console's files Windows's
+# wsl = "Ubuntu"
 
 [console]
 # Dumped from your own console; never committed.
