@@ -2165,16 +2165,17 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	frame++;
 	frame_number = frame;
 	/* how far a run got, now and then, how fast since the last time (by
-	the vertical blanks: 60 a second), and the memory left */
+	the vertical blanks: 60 a second), the share of that time the processor
+	waited on the GPU, and the memory left */
 	if (frame <= 3 || frame % 300 == 0)
 	{
 		static unsigned long last_frame, last_blank;
 		unsigned long blank = xbox_gpu_vertical_blank_count();
 
 		if (last_blank && blank != last_blank)
-			platform_log("frame %lu, %lu.%lu fps, %ld KB free, %lu KB of the contiguous pool", frame,
+			platform_log("frame %lu, %lu.%lu fps, waited %lu%%, %ld KB free, %lu KB of the contiguous pool", frame,
 				(frame - last_frame) * 60 / (blank - last_blank), (frame - last_frame) * 600 / (blank - last_blank) % 10,
-				sysconf(_SC_AVPHYS_PAGES) * 4, xbox_contiguous_pool_free_kb());
+				xbox_gpu_waited_percent(), sysconf(_SC_AVPHYS_PAGES) * 4, xbox_contiguous_pool_free_kb());
 		else
 			platform_log("frame %lu", frame);
 		last_frame = frame;
