@@ -123,14 +123,22 @@ void xbox_gpu_kick(void)
 /* until the GPU has read what lies from p to p+dwords (and the margin
 after it, for pbkit's own methods at the flips). Behind p it reads this
 lap, ahead of p what is left of the last one */
+static uint32_t room_limit;
+
 static void gpu_wait_room(const uint32_t *p, unsigned long dwords)
 {
 	uint32_t start = (uint32_t)p & 0x03ffffff;
 	uint32_t end = start + (dwords + PUSH_BUFFER_MARGIN) * 4;
 	uint32_t get;
 
+	/* the GPU's read position only moves on: the room it left at the last
+	look is still free (a register read is costly, in xemu above all) */
+	if (end <= room_limit)
+		return;
 	while ((get = gpu_get()) > start && get < end)
 		;
+	/* behind p, it reads this lap: free to the buffer's end */
+	room_limit = get > start ? get : 0xffffffff;
 }
 
 unsigned long *xbox_gpu_begin(unsigned long dwords)
@@ -155,6 +163,7 @@ unsigned long *xbox_gpu_begin(unsigned long dwords)
 		*p = head | 1;
 		pb_end(push_buffer_head);
 		p = write_end = kicked_end = push_buffer_head;
+		room_limit = 0;
 	}
 	gpu_wait_room(p, dwords);
 	return (unsigned long *)p;
@@ -201,6 +210,7 @@ void xbox_gpu_present(void)
 	while (pb_finished())
 		NtYieldExecution();
 	write_end = kicked_end = pb_begin();
+	room_limit = 0;
 }
 
 unsigned long xbox_gpu_wait_vertical_blank(void)

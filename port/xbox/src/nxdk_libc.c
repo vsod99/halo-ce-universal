@@ -9,6 +9,10 @@ objects' functions is defined here whole):
 - strtod and atof: pdclib has none (nxdk's assert);
 - fmod, which pdclib computes with one partial remainder; scalbn and
   lrint, which assert; frexp, wrong at zero;
+- memset, memcpy and memmove, which nxdk builds a byte at a time without
+  optimization (its makefile names no -O: a fifth of b30's processor time
+  in xemu): here the Pentium III's string instructions, four bytes at a
+  time;
 - getenv, which has no environment: here the NAME=VALUE lines of
   D:\\environment.txt, which `tools/xbox_dev.py run --env` writes (the
   HALO_* overrides of config.toml, which is on the hard disk).
@@ -131,6 +135,49 @@ int fputs(const char *text, FILE *stream)
 		return 0;
 	}
 	return fwrite(text, 1, strlen(text), stream) == strlen(text) ? 0 : EOF;
+}
+
+/* ---------- memory */
+
+void *memset(void *destination, int value, size_t size)
+{
+	unsigned char *bytes = destination;
+	unsigned long word = (unsigned char)value * 0x01010101ul;
+	size_t words;
+
+	for (; size && ((unsigned long)bytes & 3); size--)
+		*bytes++ = (unsigned char)value;
+	words = size >> 2;
+	__asm__ volatile("rep stosl" : "+D"(bytes), "+c"(words) : "a"(word) : "memory");
+	for (size &= 3; size; size--)
+		*bytes++ = (unsigned char)value;
+	return destination;
+}
+
+void *memcpy(void *destination, const void *source, size_t size)
+{
+	void *to = destination;
+	const void *from = source;
+	size_t words = size >> 2;
+	size_t bytes = size & 3;
+
+	__asm__ volatile("rep movsl\n\tmovl %3, %%ecx\n\trep movsb"
+		: "+D"(to), "+S"(from), "+c"(words) : "r"(bytes) : "memory");
+	return destination;
+}
+
+void *memmove(void *destination, const void *source, size_t size)
+{
+	unsigned char *to = destination;
+	const unsigned char *from = source;
+
+	if (to <= from || to >= from + size)
+		return memcpy(destination, source, size);
+	/* (overlapping, the destination above: from the end down) */
+	to += size - 1;
+	from += size - 1;
+	__asm__ volatile("std\n\trep movsb\n\tcld" : "+D"(to), "+S"(from), "+c"(size) : : "memory");
+	return destination;
 }
 
 /* ---------- numbers */
