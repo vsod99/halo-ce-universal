@@ -306,7 +306,7 @@ its medium geometry, when that fits; maps that fit keep their full detail.
 | --- | --- | --- | --- |
 | Death Island, Infinity, Yoyorast Island | 3.4-3.6 MB | 11-13 MB | 25-27 fps |
 | Portent | 3.3 MB | 7.6 MB | 19 fps |
-| Chronopolis C3 | 7.6 MB | 9.1 MB | yes |
+| Chronopolis C3 | 7.6 MB | 9.1 MB | 17 fps (xemu's GPU-bound) |
 | cmt Snow Grove | 10.5 MB | 10.9 MB | 27 fps |
 | Hugeass | 11.3 MB (5.2 at medium) | 7.2 MB | 25 fps, medium detail |
 | Extinction | 10.4 MB (6.9) | 4.8 MB | not listed |
