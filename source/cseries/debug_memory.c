@@ -528,6 +528,7 @@ void *debug_realloc(
 {
 	void *result = NULL;
 	struct debug_memory_header *header = NULL;
+	struct debug_memory_header *kept_header = NULL; /* port: below */
 	unsigned long allocation_size =
 		size + sizeof(struct debug_memory_header) + sizeof(unsigned long);
 	unsigned long old_size = 0;
@@ -552,6 +553,7 @@ void *debug_realloc(
 		old_header->signature = debug_memory_disposed_signature;
 
 		header = old_header;
+		kept_header = old_header;
 		line = header->line;
 		file = header->file;
 		old_size = header->size;
@@ -560,6 +562,15 @@ void *debug_realloc(
 	header = system_realloc(
 		header,
 		size == 0 && pointer != NULL ? 0 : allocation_size);
+	/* port: a realloc that fails leaves the block as it was, as C's does.
+	The original left it marked disposed and out of the list, so the free
+	its caller then makes halted (BUG, original; Halo Custom Edition maps'
+	sounds ran the original Xbox's heap out: custom_edition_sounds.c) */
+	if (header == NULL && kept_header != NULL && size != 0)
+	{
+		kept_header->signature = debug_memory_allocated_signature;
+		debug_memory_add_pointer(kept_header);
+	}
 	if (header != NULL)
 	{
 		header->signature = debug_memory_allocated_signature;
