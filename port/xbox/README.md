@@ -14,7 +14,14 @@ Microsoft SDK). Until the console is ready, everything runs in
 ## Setup (macOS)
 
 1. `brew install llvm lld coreutils` and `brew install --cask xemu`.
-2. `git clone --recursive https://github.com/XboxDev/nxdk ~/source/repos/nxdk`.
+2. `git clone --recursive https://github.com/XboxDev/nxdk ~/source/repos/nxdk`,
+   and build its libraries optimized (nxdk's makefile names no `-O`, and a
+   program's first `make` builds them without; CI does the same):
+
+       cd ~/source/repos/nxdk && NXDK_DIR=$PWD PATH=$PWD/bin:/opt/homebrew/opt/llvm/bin:$PATH \
+         make -B CFLAGS=-O2 $(for l in libpdclib libwinapi libxboxrt libnxdk libnxdk_hal libpbkit \
+           nxdk_usb libnxdk_automount_d xboxkrnl/libxboxkrnl; do echo $PWD/lib/$l.lib; done)
+
 3. Copy `port/xbox/xemu.example.toml` to `port/xbox/xemu.local.toml` (not
    committed) and fill it in. The MCPX boot ROM and the flash BIOS must be
    dumped from your own console. The hard disk can be xemu's blank image
@@ -57,7 +64,7 @@ pictures change.
 | `nxdk_main.c` | Start-up, before the game's `main`: the log, the hard disk as `E:`, `E:\halo`; Quit goes to the dashboard |
 | `nxdk_memory.c` | `XPhysicalAlloc` and page protection from the kernel's contiguous memory, and a pool of it set aside before the game state for when the kernel's runs out; the game state as virtual memory at 0x40000000 and the sound cache as virtual memory (`cache/physical_memory_map.c` takes the GPU's caches first); the memory left in the log (at start, once the caches are had, and with each `frame N, X fps` line) |
 | `nxdk_posix.c` | File descriptors and the file half of `port/linux/src/posix.h` over nxdk's Windows API; `D:` is the XBE's folder (maps), `E:/halo` the settings and saves |
-| `nxdk_libc.c` | What pdclib lacks or gets wrong: printf's floating point, `strtod`, `fmod`, `scalbn`, `lrint` (musl's: `port/third_party/musl-stdio`) |
+| `nxdk_libc.c` | What pdclib lacks or gets wrong: printf's floating point, `strtod`, `fmod`, `scalbn`, `lrint` (musl's: `port/third_party/musl-stdio`); `memset`, `memcpy` and `memmove` with the string instructions (pdclib's go a byte at a time) |
 | `sdl_files.c` | The SDL file functions `port_config.c` and `menu_files.c` call (`include/SDL3/SDL.h`) |
 | `d3d8_nv2a.c` | The game's Direct3D 8 as NV2A push buffer methods: its vertex shaders (NV2A microcode) and pixel shaders (combiner values) as they are, the simple render states as their own methods, the rest before each draw; textures, vertex buffers and surfaces at their physical addresses; the menus' pictures (PNGs, `port/linux/src/png_decode.c`) for their placeholder textures. `debug.gpu_trace_frame` logs a frame's draws |
 | `nxdk_nv2a.c` | pbkit: the video mode, the push buffer, the three screen buffers flipped at the vertical blank (started before the game takes its memory), and context DMAs over the low 64 MB for the game's own surfaces |
@@ -195,9 +202,12 @@ Mac's network's router to forward ports to xemu's address.
 
 samples the Xbox's processor about every 10 ms for 45 s, 80 s after the
 program's first log line: xemu's gdb stub stops the machine, the
-instruction pointer is read, and it runs on. `profile.txt` in the run's
+instruction pointer and the return addresses on the stack are read (the
+game keeps frame pointers), and it runs on. `profile.txt` in the run's
 folder has the shares by function (halo.exe's DWARF, and the link map for
-nxdk's libraries) and by source folder. xemu's instructions do not cost a
+nxdk's libraries), by function with what it called, by source folder, and
+the callers of the busiest functions; `samples.json` keeps the stacks
+(`tools/xbox_dev.py profile RUN` writes the report again). xemu's instructions do not cost a
 Pentium III's, so these are shares, not timings. Play tests want a release
 build (`python3 configure.py --release`): in a 30-player internet game the
 assertions and checked accessors of the default build took the frame rate
