@@ -1,7 +1,8 @@
 name: Build
 
-# Debug and release builds of the native ports (Linux, Windows, Android) and
-# the web port for every pushed commit, uploaded as artifacts.
+# Debug and release builds of the native ports (Linux, Windows, Android), the
+# web port and the original Xbox's for every pushed commit, uploaded as
+# artifacts.
 # tools/ci_build.py does each build; see it for the options.
 #
 # Kept cheap:
@@ -337,13 +338,91 @@ jobs:
           include-hidden-files: true
           retention-days: 3
 
+  xbox:
+    # The original Xbox build (port/xbox): clang and lld for i386-pc-win32,
+    # and nxdk's libraries and cxbe, built from the nxdk commit the port is
+    # built against locally (only the submodules those libraries need; the
+    # whole is cached by commit). The build finds both through
+    # port/xbox/xemu.local.toml's [tools], as on a developer's machine.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      NXDK_COMMIT: 14d5ee97e73347c973f1f57b68b79ec08c9e77f2
+      LLVM_BIN: /usr/lib/llvm-18/bin
+    steps:
+      - name: Install the toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q clang-18 lld-18 llvm-18 ninja-build ccache make g++
+          echo "$LLVM_BIN" >> "$GITHUB_PATH"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-xbox-${{ github.sha }}
+          restore-keys: ccache-xbox-
+
+      - uses: actions/cache@v4
+        id: nxdk-cache
+        with:
+          path: build/xbox/third_party/nxdk
+          key: nxdk-${{ env.NXDK_COMMIT }}-llvm18-O2
+
+      - name: nxdk
+        if: steps.nxdk-cache.outputs.cache-hit != 'true'
+        run: |
+          nxdk="$GITHUB_WORKSPACE/build/xbox/third_party/nxdk"
+          git clone -q https://github.com/XboxDev/nxdk.git "$nxdk"
+          cd "$nxdk"
+          git checkout -q "$NXDK_COMMIT"
+          git submodule update -q --init --depth 1 lib/pdclib lib/net/lwip lib/usb/libusbohci
+          export NXDK_DIR="$nxdk" PATH="$nxdk/bin:$PATH"
+          # (the libraries' rules name them by their full paths)
+          libs=""
+          for lib in libpdclib libwinapi libxboxrt libnxdk libnxdk_hal libpbkit nxdk_usb libnxdk_automount_d \
+            xboxkrnl/libxboxkrnl; do
+            libs="$libs $nxdk/lib/$lib.lib"
+          done
+          # (optimized: nxdk's makefile names no -O, and its C library's
+          # memset alone was a fifth of a campaign map's processor time)
+          make -j"$(nproc)" CFLAGS=-O2 cxbe $libs
+          ls -l $libs
+
+      - name: Tools
+        run: |
+          printf '[tools]\nnxdk = "%s"\nllvm_bin = "%s"\nlld_bin = "%s"\n' \
+            "$GITHUB_WORKSPACE/build/xbox/third_party/nxdk" "$LLVM_BIN" "$LLVM_BIN" > port/xbox/xemu.local.toml
+
+      - name: Debug
+        run: python3 tools/ci_build.py xbox debug
+
+      - name: Release
+        run: python3 tools/ci_build.py xbox release
+
+      - name: Compile cache
+        run: ccache --show-stats
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: halo-xbox-debug
+          path: dist/halo-xbox-debug
+          retention-days: 3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: halo-xbox-release
+          path: dist/halo-xbox-release
+          retention-days: 3
+
   release:
     # The eight builds (and the Windows builds' PDBs) as a release, tagged
     # build-<run number> and marked latest
     # (every file keeps its name from release to release, for the README's
     # latest/download links); then all but the newest five build-* releases
     # go, tags and all. Only for main, and only when every platform built.
-    needs: [linux, android, windows, web]
+    needs: [linux, android, windows, web, xbox]
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -461,7 +540,7 @@ jobs:
     # without it): green when every platform built, red when one did not,
     # with each platform's result, this run's release (main only), and links
     # to the latest release's builds and the site.
-    needs: [linux, android, windows, web, release, pages]
+    needs: [linux, android, windows, web, xbox, release, pages]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -473,6 +552,7 @@ jobs:
           ANDROID: ${{ needs.android.result }}
           WINDOWS: ${{ needs.windows.result }}
           WEB: ${{ needs.web.result }}
+          XBOX: ${{ needs.xbox.result }}
           PAGES: ${{ needs.pages.result }}
           SITE_URL: https://halocombatevolved.com/
           RELEASE_TAG: ${{ needs.release.outputs.tag }}
@@ -497,7 +577,7 @@ jobs:
               *) echo "➖ Skipped" ;;
             esac
           }
-          if [ "$LINUX" = success ] && [ "$ANDROID" = success ] && [ "$WINDOWS" = success ] && [ "$WEB" = success ]; then
+          if [ "$LINUX" = success ] && [ "$ANDROID" = success ] && [ "$WINDOWS" = success ] && [ "$WEB" = success ] && [ "$XBOX" = success ]; then
             title="Build succeeded"; color=5763719
           else
             title="Build failed"; color=15548997
@@ -519,6 +599,7 @@ jobs:
             --arg release "$release" --arg downloads "$downloads" \
             --arg linux "$(status "$LINUX")" --arg windows "$(status "$WINDOWS")" --arg android "$(status "$ANDROID")" \
             --arg web "$(status "$WEB")" \
+            --arg xbox "$(status "$XBOX")" \
             --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{embeds: [{
               title: $title, url: $url, color: $color, description: $description, timestamp: $timestamp,
@@ -527,6 +608,7 @@ jobs:
                 {name: "Windows", value: $windows, inline: true},
                 {name: "Android", value: $android, inline: true},
                 {name: "Web", value: $web, inline: true},
+                {name: "Xbox", value: $xbox, inline: true},
                 {name: "Release", value: $release},
                 {name: "Latest release builds", value: $downloads}
               ]
