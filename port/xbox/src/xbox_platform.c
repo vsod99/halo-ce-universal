@@ -54,12 +54,15 @@ BOOL platform_offer_game_data(const char *destination)
 	return FALSE;
 }
 
-/* the scoreboard's mouse wheel and page keys */
+/* the scoreboard's mouse wheel and page keys: none (a closing scoreboard
+passes no counts: game_engine_scoreboard_closed) */
 void platform_scoreboard_scroll(int open, long *notches, long *pages)
 {
 	(void)open;
-	*notches = 0;
-	*pages = 0;
+	if (notches)
+		*notches = 0;
+	if (pages)
+		*pages = 0;
 }
 
 /* a frame per game tick, as the Xbox drew it (the plan: no frames between
