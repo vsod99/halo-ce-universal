@@ -34,8 +34,10 @@ layout: saved games of builds before it no longer load. */
 /* The original Xbox port (port/xbox) gives the kernel's contiguous memory
 to the caches, and the game state is virtual memory at its own fixed
 address (port/xbox/src/nxdk_memory.c). Only the sizes need be the same on
-every machine: the netcode names things by datum index, never by address. */
-#define HALO_PORT_GAME_STATE_BASE_ADDRESS 0x40000000
+every machine: the netcode names things by datum index, never by address.
+It lies above the Custom Edition tag cache's window, 0x40440000-0x41B40000,
+and the page tables' 4 MB steps around it (nxdk_memory.c). */
+#define HALO_PORT_GAME_STATE_BASE_ADDRESS 0x42000000
 #else
 #define HALO_PORT_GAME_STATE_BASE_ADDRESS 0x81A00000 /* (0x80061000) */
 #endif

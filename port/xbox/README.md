@@ -94,7 +94,7 @@ pictures change.
 | Unit | What |
 | --- | --- |
 | `nxdk_main.c` | Start-up, before the game's `main`: the log, the hard disk as `E:`, `E:\halo`; Quit goes to the dashboard |
-| `nxdk_memory.c` | `XPhysicalAlloc` and page protection from the kernel's contiguous memory, and a pool of it set aside before the game state for when the kernel's runs out; the game state as virtual memory at 0x40000000 and the sound cache as virtual memory (`cache/physical_memory_map.c` takes the GPU's caches first); the memory left in the log (at start, once the caches are had, and with each `frame N, X fps` line) |
+| `nxdk_memory.c` | `XPhysicalAlloc` and page protection from the kernel's contiguous memory, and a pool of it set aside before the game state for when the kernel's runs out; the game state as virtual memory at 0x42000000 and the sound cache as virtual memory; Halo Custom Edition's tag cache window at 0x40440000, made of the Xbox tag cache's pages (`cache/physical_memory_map.c` takes the GPU's caches first); the memory left in the log (at start, once the caches are had, and with each `frame N, X fps` line) |
 | `nxdk_posix.c` | File descriptors and the file half of `port/linux/src/posix.h` over nxdk's Windows API; `D:` is the XBE's folder (maps), `E:/halo` the settings and saves |
 | `nxdk_libc.c` | What pdclib lacks or gets wrong: printf's floating point, `strtod`, `fmod`, `scalbn`, `lrint` (musl's: `port/third_party/musl-stdio`); `memset`, `memcpy` and `memmove` with the string instructions (pdclib's go a byte at a time) |
 | `sdl_files.c` | The SDL file functions `port_config.c` and `menu_files.c` call (`include/SDL3/SDL.h`) |
@@ -260,6 +260,39 @@ forwards it to the Xbox's tunnel port, and the runner is the Xbox's only
 STUN server, telling it the router's address and that port are its own.
 The forwarding is removed at the end. The host's map must be in `[game]
 maps`.
+
+### Halo Custom Edition maps
+
+    [game]
+    custom_maps_folder = "~/halo/custom_maps"   # the maps and bitmaps.map, sounds.map, loc.map
+    custom_maps = "deathisland,infinity"
+
+The runner packs the maps `[game] custom_maps` names, with Custom Edition's
+`bitmaps.map`, `sounds.map` and `loc.map` (every Custom Edition map reads
+tags from them), beside the XBE as `D:\custom_maps`, the folder the game
+looks in (`docs/custom_edition_caches.md`). A map's level name is
+`custom_maps\<name>`: `--env 'HALO_START_MAP=custom_maps\deathisland'`.
+
+A Custom Edition map's tags are linked to run at 0x40440000, up to 23 MB of
+them, and the Xbox has no 23 MB to spare. Only one map is loaded at a time,
+so when `D:\custom_maps` exists `nxdk_memory.c` maps the 22 MB Xbox tag
+cache's own pages a second time at 0x40440000 (the program runs in the
+processor's most privileged mode, so it writes the page tables itself, in a
+range reserved from the kernel), and 1 MB more for the last megabyte, where
+structure BSPs load. The game state moved from 0x40000000 to 0x42000000 to
+make room (saved games of earlier Xbox builds no longer load). Sounds
+Custom Edition keeps as Ogg Vorbis are encoded again at load into 2 MB at
+most; the rest are silent.
+
+State (Oct 10): the window is made and checked at start-up, and a map is
+found, opened and read up to its resource maps. Not done yet: a map's model
+and structure geometry is made into vertex buffers in contiguous memory,
+twice (the compressed vertices and the Direct3D buffer's copy), which the
+Xbox does not have room for; the plan is to put the vertices in the window
+between the tags and the lowest structure BSP (13 MB on Death Island) and
+draw from them in place, as the Xbox maps' buffers are. The renderer has
+no texture swizzle, so multipurpose maps and HUD meters are drawn in Halo
+PC's channel order.
 
 ## Programs
 

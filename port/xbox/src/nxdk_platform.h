@@ -27,6 +27,10 @@ unsigned long xbox_contiguous_pool_free_kb(void);
 unsigned long xbox_contiguous_largest_kb(void);
 /* the memory left and the largest contiguous block, to the log */
 void xbox_memory_report(const char *when);
+/* maps Halo Custom Edition's tag cache window, 0x40440000, onto the Xbox
+tag cache's pages, when there are Custom Edition maps
+(cache/physical_memory_map.c; nxdk_memory.c) */
+void xbox_custom_edition_tag_cache_map(void *tag_cache, unsigned long tag_cache_bytes);
 
 /* the controllers (nxdk_gamepads.c, for xinput_xbox.c) */
 /* (a report is an XINPUT_GAMEPAD's bytes) */

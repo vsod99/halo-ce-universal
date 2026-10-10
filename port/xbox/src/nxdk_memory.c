@@ -253,6 +253,151 @@ void *xbox_game_state_allocate(unsigned long address, unsigned long size)
 	return base;
 }
 
+/* ---------- Halo Custom Edition's tag cache
+
+A Custom Edition map's tags are linked to run at 0x40440000, 23 MB of them
+at most (port/linux/game/cache_file_formats.h), where the Xbox maps' run at
+0x803A6000, 22 MB. Only one map is loaded at a time, and there are not 23 MB
+to spare, so the window is the Xbox tag cache's own pages mapped a second
+time, and 1 MB more for its last megabyte. Every program runs in the
+processor's most privileged mode here, so the window is made by writing the
+page tables (the kernel's, mapped at 0xC0000000 as Windows NT's are), in an
+address range reserved from the kernel, which never commits, frees or looks
+into it: the range covers the page tables' 4 MB steps the window touches, so
+no other allocation shares their page tables. */
+#define PAGE_TABLES_BASE 0xC0000000UL
+#define PAGE_DIRECTORY_BASE 0xC0300000UL
+#define PAGE_TABLE_SPAN 0x400000UL
+#define PAGE_PRESENT 0x001UL
+#define PAGE_WRITABLE 0x002UL
+#define PAGE_ACCESSED 0x020UL
+#define PAGE_DIRTY 0x040UL
+#define PAGE_LARGE 0x080UL
+#define PAGE_FRAME 0xFFFFF000UL
+/* (port/linux/game/cache_file_formats.h, port/linux/game/custom_edition_cache.h) */
+#define CUSTOM_EDITION_TAG_CACHE_ADDRESS 0x40440000UL
+#define CUSTOM_EDITION_TAG_CACHE_BYTES 0x01700000UL
+#define CUSTOM_EDITION_MAP_DIRECTORY "D:\\custom_maps"
+
+/* (port/linux/src/port_config.c) */
+int config_boolean(const char *name);
+
+static void *custom_edition_tag_cache = NULL;
+
+static volatile unsigned long *page_directory_entry(unsigned long address)
+{
+	return (volatile unsigned long *)(PAGE_DIRECTORY_BASE + (address / PAGE_TABLE_SPAN) * 4);
+}
+
+static volatile unsigned long *page_table_entry(unsigned long address)
+{
+	return (volatile unsigned long *)(PAGE_TABLES_BASE + (address / PAGE_BYTES) * 4);
+}
+
+/* whether the page tables are where they are looked for: a page of the
+program's own, which the kernel mapped, is found through them at its
+physical address */
+static BOOL page_tables_found(void)
+{
+	static unsigned long probe = 1;
+	unsigned long address = (unsigned long)&probe;
+	unsigned long directory = *page_directory_entry(address);
+	unsigned long physical = (unsigned long)MmGetPhysicalAddress(&probe);
+
+	if (!(directory & PAGE_PRESENT))
+		return FALSE;
+	if (directory & PAGE_LARGE)
+		return (directory & ~(PAGE_TABLE_SPAN - 1)) == (physical & ~(PAGE_TABLE_SPAN - 1));
+	return (*page_table_entry(address) & PAGE_FRAME) == (physical & PAGE_FRAME);
+}
+
+void xbox_custom_edition_tag_cache_map(void *tag_cache, unsigned long tag_cache_bytes)
+{
+	unsigned long first = CUSTOM_EDITION_TAG_CACHE_ADDRESS & ~(PAGE_TABLE_SPAN - 1);
+	unsigned long end = (CUSTOM_EDITION_TAG_CACHE_ADDRESS + CUSTOM_EDITION_TAG_CACHE_BYTES + PAGE_TABLE_SPAN - 1) &
+		~(PAGE_TABLE_SPAN - 1);
+	unsigned long extra_bytes = CUSTOM_EDITION_TAG_CACHE_BYTES - tag_cache_bytes;
+	unsigned long page_tables = (end - first) / PAGE_TABLE_SPAN;
+	unsigned char *tables, *extra;
+	unsigned long address, index;
+	PVOID base = (PVOID)first;
+	SIZE_T region_size = end - first;
+	DWORD attributes;
+
+	if (!config_boolean("game.custom_edition"))
+		return;
+	/* (the 1 MB more is had only when there are Custom Edition maps) */
+	attributes = GetFileAttributesA(CUSTOM_EDITION_MAP_DIRECTORY);
+	if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY))
+		return;
+	if (tag_cache_bytes > CUSTOM_EDITION_TAG_CACHE_BYTES || !page_tables_found())
+	{
+		platform_log("custom edition: the page tables are not where they were looked for: Custom Edition maps cannot run");
+		return;
+	}
+	if (!NT_SUCCESS(NtAllocateVirtualMemory(&base, 0, &region_size, MEM_RESERVE, PAGE_READWRITE)) ||
+		(unsigned long)base != first)
+	{
+		platform_log("custom edition: cannot reserve %08lx-%08lx: Custom Edition maps cannot run", first, end);
+		return;
+	}
+	tables = MmAllocateContiguousMemoryEx(page_tables * PAGE_BYTES, 0, 0xFFFFFFFF, PAGE_BYTES, PAGE_READWRITE);
+	extra = extra_bytes ? MmAllocateContiguousMemoryEx(extra_bytes, 0, 0xFFFFFFFF, PAGE_BYTES, PAGE_READWRITE) : NULL;
+	if (!tables || (extra_bytes && !extra))
+	{
+		platform_log("custom edition: no memory for the tag cache's last %lu KB: Custom Edition maps cannot run",
+			extra_bytes / 1024);
+		if (tables)
+			MmFreeContiguousMemory(tables);
+		return;
+	}
+	memset(tables, 0, page_tables * PAGE_BYTES);
+	if (extra)
+		memset(extra, 0, extra_bytes);
+	for (index = 0; index < page_tables; index++)
+	{
+		*page_directory_entry(first + index * PAGE_TABLE_SPAN) =
+			((unsigned long)MmGetPhysicalAddress(tables + index * PAGE_BYTES) & PAGE_FRAME) |
+			PAGE_PRESENT | PAGE_WRITABLE | PAGE_ACCESSED;
+	}
+	__asm__ __volatile__("movl %%cr3, %%eax\n\tmovl %%eax, %%cr3" ::: "eax", "memory");
+	for (address = CUSTOM_EDITION_TAG_CACHE_ADDRESS;
+		address < CUSTOM_EDITION_TAG_CACHE_ADDRESS + CUSTOM_EDITION_TAG_CACHE_BYTES;
+		address += PAGE_BYTES)
+	{
+		unsigned long offset = address - CUSTOM_EDITION_TAG_CACHE_ADDRESS;
+		void *page = offset < tag_cache_bytes ? (unsigned char *)tag_cache + offset : extra + (offset - tag_cache_bytes);
+
+		*page_table_entry(address) = ((unsigned long)MmGetPhysicalAddress(page) & PAGE_FRAME) |
+			PAGE_PRESENT | PAGE_WRITABLE | PAGE_ACCESSED | PAGE_DIRTY;
+	}
+	__asm__ __volatile__("movl %%cr3, %%eax\n\tmovl %%eax, %%cr3" ::: "eax", "memory");
+	/* (what is written to one is read from the other) */
+	{
+		volatile unsigned long *window = (volatile unsigned long *)CUSTOM_EDITION_TAG_CACHE_ADDRESS;
+		volatile unsigned long *own = (volatile unsigned long *)tag_cache;
+		unsigned long kept = *own;
+		BOOL same;
+
+		*window = 0x43454D50UL;
+		same = *own == 0x43454D50UL;
+		*own = kept;
+		if (!same)
+		{
+			platform_log("custom edition: the tag cache window does not show the tag cache: Custom Edition maps cannot run");
+			return;
+		}
+	}
+	custom_edition_tag_cache = (void *)CUSTOM_EDITION_TAG_CACHE_ADDRESS;
+	platform_log("custom edition: the tag cache at %08lx is the Xbox tag cache's pages and %lu KB more",
+		CUSTOM_EDITION_TAG_CACHE_ADDRESS, extra_bytes / 1024);
+}
+
+void *halo_custom_edition_tag_cache(void)
+{
+	return custom_edition_tag_cache;
+}
+
 /* ---------- XAPI */
 
 LPVOID WINAPI XPhysicalAlloc(SIZE_T size, ULONG_PTR physical_address, ULONG_PTR alignment, DWORD protect)

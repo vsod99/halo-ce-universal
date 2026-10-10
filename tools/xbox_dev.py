@@ -176,6 +176,35 @@ def add_maps(config: dict, maps_dir: Path) -> None:
             shutil.copyfile(map_file, maps_dir / map_file.name)
 
 
+# what every Custom Edition map's tags are read from, beside it
+CUSTOM_EDITION_RESOURCE_MAPS = ("bitmaps", "sounds", "loc")
+
+
+def add_custom_maps(config: dict, custom_maps_dir: Path) -> None:
+    """the Custom Edition maps [game] custom_maps names (none by default)
+    from its custom_maps_folder, with bitmaps.map, sounds.map and loc.map,
+    beside the game's XBE (D:\\custom_maps), linked rather than copied"""
+    game = config.get("game", {})
+    names = [name.strip() for name in game.get("custom_maps", "").split(",") if name.strip()]
+    if custom_maps_dir.is_dir():
+        shutil.rmtree(custom_maps_dir)
+    if not names:
+        return
+    if not game.get("custom_maps_folder"):
+        sys.exit("[game] custom_maps is set but custom_maps_folder is not, in port/xbox/xemu.local.toml")
+    source = expand(game["custom_maps_folder"])
+    custom_maps_dir.mkdir(parents=True)
+    for name in [*names, *CUSTOM_EDITION_RESOURCE_MAPS]:
+        map_file = source / f"{name}.map"
+        if not map_file.is_file():
+            sys.exit(f"{map_file} is missing" + (" (Halo Custom Edition's own, which every Custom Edition map needs)"
+                                                 if name in CUSTOM_EDITION_RESOURCE_MAPS else ""))
+        try:
+            os.link(map_file, custom_maps_dir / map_file.name)
+        except OSError:
+            shutil.copyfile(map_file, custom_maps_dir / map_file.name)
+
+
 def write_environment(bin_dir: Path, environment: list) -> None:
     """the --env NAME=VALUE settings as D:\\environment.txt, which the
     game's getenv reads (port/xbox/src/nxdk_libc.c): the HALO_* overrides
@@ -211,6 +240,7 @@ def build(config: dict, project: Path, environment: list = ()) -> Path:
         sys.exit(f"build of {project} failed")
     if project == ROOT / "build/xbox/halo":
         add_maps(config, project / "bin/maps")
+        add_custom_maps(config, project / "bin/custom_maps")
     return pack(config, project, environment, project.name)
 
 
