@@ -34,6 +34,7 @@ the channels (port/linux/src/dsound_sdl.c decodes it).
 #define STB_VORBIS_HEADER_ONLY
 #include "stb_vorbis.c"
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -231,11 +232,17 @@ static short *frames_allocate(
 
 /* the Ogg Vorbis stream `data`, at its own channel count and rate; FALSE
 when it cannot be decoded. It is decoded a packet at a time, so a stream
-of more channels than a sound has, or one longer than any sound, is
-refused as soon as that shows, before it has used the memory. */
+of more channels than a sound has, one longer than any sound, or one whose
+Xbox ADPCM at `encoded_channels` and `encoded_rate` would take more than
+`encoded_room` bytes, is refused as soon as that shows, before it has used
+the memory or the time (the original Xbox's room is 2 MB, and decoding the
+rest of Chronopolis's dialogue only to refuse it took minutes). */
 static boolean vorbis_decode(
 	byte const *data,
 	long data_bytes,
+	long encoded_channels,
+	long encoded_rate,
+	unsigned long encoded_room,
 	struct frames *frames)
 {
 	int error = 0;
@@ -288,6 +295,11 @@ static boolean vorbis_decode(
 			break;
 		}
 		frames->count += count;
+		if (encoded_room != ULONG_MAX &&
+			adpcm_encoded_bytes((long)((double)frames->count * encoded_rate / info.sample_rate), encoded_channels) > encoded_room)
+		{
+			break;
+		}
 	}
 	stb_vorbis_close(vorbis);
 	if (!decoded)
@@ -400,12 +412,14 @@ static boolean samples_decode(
 	boolean big_endian,
 	long channels,
 	long rate,
+	long encoded_rate,
+	unsigned long encoded_room,
 	struct frames *frames)
 {
 	switch (compression)
 	{
 	case SOUND_COMPRESSION_OGG_VORBIS:
-		return vorbis_decode(data, data_bytes, frames);
+		return vorbis_decode(data, data_bytes, channels, encoded_rate, encoded_room, frames);
 	case SOUND_COMPRESSION_NONE:
 		return pcm_decode(data, data_bytes, channels, rate, big_endian, frames);
 	case SOUND_COMPRESSION_XBOX_ADPCM:
@@ -525,14 +539,18 @@ static boolean permutation_convert(
 	byte *data;
 	long offset = NONE;
 
-	/* (the loader checked the samples lie in the file; none at all is no sound) */
-	if (permutation->samples.size <= 0 || !(data = malloc(permutation->samples.size)))
+	unsigned long room = custom_edition_sounds_globals.decoded_limit - custom_edition_sounds_globals.decoded_bytes;
+
+	/* (the loader checked the samples lie in the file; none at all is no
+	sound; and with no room left for a block of it there is no point) */
+	if (permutation->samples.size <= 0 || room < adpcm_encoded_bytes(1, channels) ||
+		!(data = malloc(permutation->samples.size)))
 	{
 		return FALSE;
 	}
 	custom_edition_cache_read(NONE, permutation->samples.file_offset, permutation->samples.size, data);
 	decoded = samples_decode(data, permutation->samples.size, permutation->compression, FALSE,
-		channels, rate, &frames);
+		channels, rate, playable_rate(sound), room, &frames);
 	free(data);
 
 	if (decoded && frames_conform(&frames, channels, playable_rate(sound)))
@@ -639,7 +657,7 @@ byte *custom_edition_sounds_encode(
 	byte *encoded = NULL;
 
 	if (data_bytes > 0 && channels >= 1 && channels <= 2 &&
-		samples_decode(data, data_bytes, compression, big_endian, channels, rate, &frames) &&
+		samples_decode(data, data_bytes, compression, big_endian, channels, rate, encoded_rate, ULONG_MAX, &frames) &&
 		frames_conform(&frames, channels, encoded_rate))
 	{
 		*encoded_bytes = adpcm_encoded_bytes(frames.count, channels);
