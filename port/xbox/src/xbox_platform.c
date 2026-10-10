@@ -113,12 +113,10 @@ int platform_audio_devices(int recording, char (*names)[128], int maximum)
 	return 0;
 }
 
-/* ---------- Halo Custom Edition maps: none */
-
-void *halo_custom_edition_tag_cache(void)
-{
-	return NULL;
-}
+/* ---------- Halo Custom Edition maps: the tag cache is nxdk_memory.c's.
+The renderer samples every texture in the Xbox's channel order (the NV2A
+has no texture swizzle), so a Custom Edition multipurpose map or HUD meter
+is drawn with its channels as Halo PC keeps them */
 
 void halo_custom_edition_texels_channels(const void *texels, unsigned char channel_order)
 {

@@ -21,3 +21,7 @@ memory = "128"       # "64" (retail) or "128" (upgraded)
 # The Xbox maps the game reads (from your own Halo disc); never committed.
 maps_folder = ""     # a folder of .map files
 maps = "ui"          # those packed beside the XBE, comma separated (ui alone: the main menu)
+# Halo Custom Edition maps (optional): a folder of them with Custom Edition's
+# bitmaps.map, sounds.map and loc.map, and the ones packed as D:\custom_maps
+custom_maps_folder = ""
+custom_maps = ""     # names without .map, comma separated (none by default)

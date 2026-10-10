@@ -87,11 +87,15 @@ void physical_memory_allocate(
 		extern void *xbox_virtual_allocate(unsigned long size);
 		extern void xbox_contiguous_reserve(void);
 		extern void xbox_memory_report(char const *when);
+		extern void xbox_custom_edition_tag_cache_map(void *tag_cache, unsigned long tag_cache_bytes);
 
 		physical_memory_map_globals.tag_cache_base_address = XPhysicalAlloc(TAG_CACHE_SIZE, TAG_CACHE_BASE_ADDRESS & 0x7FFFFFFF, 0, PAGE_READWRITE);
 		match_assert(__FILE__, __LINE__, (unsigned long)physical_memory_map_globals.tag_cache_base_address==TAG_CACHE_BASE_ADDRESS);
 		physical_memory_map_globals.texture_cache_base_address = XPhysicalAlloc(TEXTURE_CACHE_SIZE, -1, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
 		match_assert(__FILE__, __LINE__, physical_memory_map_globals.texture_cache_base_address);
+		/* (Custom Edition maps' tags run at 0x40440000 in the tag cache's own
+		pages: nxdk_memory.c) */
+		xbox_custom_edition_tag_cache_map(physical_memory_map_globals.tag_cache_base_address, TAG_CACHE_SIZE);
 		xbox_contiguous_reserve();
 		/* (the sounds are mixed by the processor, not the sound hardware:
 		port/linux/src/dsound_sdl.c) */

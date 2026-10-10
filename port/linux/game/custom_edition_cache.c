@@ -52,6 +52,14 @@ after the largest map it takes, bitmaps.map, sounds.map */
 #define COMBINED_BITMAPS_OFFSET 0x40000000UL
 #define COMBINED_SOUNDS_OFFSET 0x60000000UL
 #define COMBINED_OFFSET_LIMIT 0x80000000UL
+/* the most bytes of sounds decoded at load (custom_edition_sounds.c): as many
+as the offset space holds, but on the original Xbox, which has a few MB of
+heap in a map (port/xbox/README.md), 2 MB; the sounds past it are silenced */
+#ifdef HALO_XBOX
+#define DECODED_SOUNDS_LIMIT 0x200000UL
+#else
+#define DECODED_SOUNDS_LIMIT (COMBINED_BITMAPS_OFFSET - COMBINED_DECODED_OFFSET)
+#endif
 
 /* The renderer write-protects the memory it has made textures of and learns
 of changes to it from the faults writes take (port/linux/src/memory_watch.c);
@@ -393,8 +401,7 @@ static boolean custom_edition_cache_tags_convert(
 		COMBINED_BITMAPS_OFFSET,
 		COMBINED_SOUNDS_OFFSET);
 	/* (before the conversion, which silences sounds this build cannot play) */
-	custom_edition_sounds_decode(tag_cache, loaded_bytes, (long)COMBINED_DECODED_OFFSET,
-		COMBINED_BITMAPS_OFFSET - COMBINED_DECODED_OFFSET);
+	custom_edition_sounds_decode(tag_cache, loaded_bytes, (long)COMBINED_DECODED_OFFSET, DECODED_SOUNDS_LIMIT);
 	status = custom_edition_cache_convert(tag_cache, loaded_bytes, report->identity.name, &conversion);
 	if (status != _cache_file_status_ok)
 	{
