@@ -25,7 +25,9 @@ static int xbox_startup(void)
 {
 	int serial = xbox_log_initialize(0);
 
-	platform_log("Halo for the original Xbox (port/xbox), log on %s", serial ? "COM2" : "the screen only");	/* E:, the hard disk's first partition: the settings, saves and cache
+	platform_log("Halo for the original Xbox (port/xbox), log on %s", serial ? "COM2" : "the screen only");
+	xbox_memory_report("the program loaded");
+	/* E:, the hard disk's first partition: the settings, saves and cache
 	(port/linux/src/xbox_files.c, port/xbox/src/sdl_files.c) */
 	if (!nxIsDriveMounted('E') && !nxMountDrive('E', "\\Device\\Harddisk0\\Partition1\\"))
 		platform_log("cannot mount the hard disk as E:");

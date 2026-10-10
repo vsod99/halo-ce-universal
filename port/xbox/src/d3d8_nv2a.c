@@ -1102,9 +1102,10 @@ static DWORD texture_mag_filter(DWORD mag)
 
 /* ---------- the PC menus' pictures */
 
-/* the most memory the decoded pictures keep, and the largest side one has
-(a picture from a menus folder may be a desktop's) */
-#define ART_BUDGET (8UL * 1024 * 1024)
+/* the most memory the decoded pictures keep (contiguous memory, which a
+map's render targets need too: the server browser's hold 2.3 MB), and the
+largest side one has (a picture from a menus folder may be a desktop's) */
+#define ART_BUDGET (4UL * 1024 * 1024)
 #define ART_LARGEST 1024
 #define ART_TEXTURES 256
 
@@ -1167,10 +1168,11 @@ static void art_release(struct art_texture *art)
 }
 
 /* makes room for that many bytes from the pictures no draw of this frame
-or the last uses (the GPU has finished the frames before those: Present) */
-static void art_make_room(unsigned long bytes)
+or the last uses (the GPU has finished the frames before those: Present),
+the oldest first; under a budget of 0, all of them */
+static void art_make_room(unsigned long bytes, unsigned long budget)
 {
-	while (art_bytes + bytes > ART_BUDGET)
+	while (art_bytes + bytes > budget)
 	{
 		struct art_texture *oldest = NULL;
 		int index;
@@ -1204,9 +1206,17 @@ static void art_decode(struct art_texture *art, const unsigned char *png, unsign
 	that size), sampled nearest */
 	width = largest_power_of_two(png_width, ART_LARGEST);
 	height = largest_power_of_two(png_height, ART_LARGEST);
-	art_make_room(width * height * 4);
+	art_make_room(width * height * 4, ART_BUDGET);
 	texels = platform_contiguous_alloc(width * height * 4, D3DTEXTURE_ALIGNMENT, PLATFORM_ANY_PHYSICAL_ADDRESS,
 		PAGE_READWRITE);
+	/* (out of contiguous memory: then with what the pictures not drawn
+	lately hold) */
+	if (!texels && art_bytes)
+	{
+		art_make_room(width * height * 4, 0);
+		texels = platform_contiguous_alloc(width * height * 4, D3DTEXTURE_ALIGNMENT, PLATFORM_ANY_PHYSICAL_ADDRESS,
+			PAGE_READWRITE);
+	}
 	if (!texels)
 	{
 		platform_log("menus: no memory for a %lux%lu picture; not drawn (pictures hold %lu KB, the largest "
@@ -2147,16 +2157,17 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	flip_count++;
 	frame++;
 	frame_number = frame;
-	/* how far a run got, now and then, and how fast since the last time
-	(by the vertical blanks: 60 a second) */
+	/* how far a run got, now and then, how fast since the last time (by
+	the vertical blanks: 60 a second), and the memory left */
 	if (frame <= 3 || frame % 300 == 0)
 	{
 		static unsigned long last_frame, last_blank;
 		unsigned long blank = xbox_gpu_vertical_blank_count();
 
 		if (last_blank && blank != last_blank)
-			platform_log("frame %lu, %lu.%lu fps", frame, (frame - last_frame) * 60 / (blank - last_blank),
-				(frame - last_frame) * 600 / (blank - last_blank) % 10);
+			platform_log("frame %lu, %lu.%lu fps, %ld KB free, %lu KB of the contiguous pool", frame,
+				(frame - last_frame) * 60 / (blank - last_blank), (frame - last_frame) * 600 / (blank - last_blank) % 10,
+				sysconf(_SC_AVPHYS_PAGES) * 4, xbox_contiguous_pool_free_kb());
 		else
 			platform_log("frame %lu", frame);
 		last_frame = frame;

@@ -49,8 +49,13 @@ Each map can have, beside it in its folder:
 
 /* ---------- constants */
 
-/* Custom Edition campaign maps, for co-op */
+/* Custom Edition campaign maps, for co-op (fewer on the original Xbox, as
+CUSTOM_EDITION_MAPS_MAXIMUM) */
+#ifdef HALO_XBOX
+#define MAXIMUM_CUSTOM_EDITION_CAMPAIGNS 64
+#else
 #define MAXIMUM_CUSTOM_EDITION_CAMPAIGNS 1024
+#endif
 #define FIRST_CUSTOM_CAMPAIGN_DISPLAY_INDEX 0x6000
 /* room for the level list's Xbox levels (ui_widget_event_handler_functions.c has 13) */
 #define MAXIMUM_XBOX_LEVELS 16
