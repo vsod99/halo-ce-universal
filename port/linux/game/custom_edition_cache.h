@@ -265,4 +265,16 @@ boolean custom_edition_structure_bsp_load(
 void custom_edition_structure_bsp_unload(
 	void);
 
+#ifdef HALO_XBOX
+/* The original Xbox's room for geometry: from `start` to `end`, in the Xbox
+tag cache, which the Custom Edition tag cache's pages are
+(custom_edition_geometry.c) */
+void custom_edition_geometry_span_set(
+	void *start,
+	void *end);
+/* moves its end, keeping the geometry made in it */
+void custom_edition_geometry_span_extend(
+	void *end);
+#endif
+
 #endif

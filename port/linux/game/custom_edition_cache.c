@@ -30,6 +30,9 @@ where its offset falls in their combined offset space.
 #include "cache_file_formats.h"
 #include "custom_edition_cache.h"
 #include "tag_schema.h"
+#ifdef HALO_XBOX
+#include "cache/physical_memory_map.h"
+#endif
 
 #include <stdlib.h>
 
@@ -275,17 +278,69 @@ static void custom_edition_cache_files_close(
 
 /* Converts the loaded map's models for this build from its model data,
 which is read for the purpose and let go. */
+#ifdef HALO_XBOX
+/* The original Xbox (port/xbox) has a few MB of heap in a map, too little for
+a map's model data, which is read whole while the models are converted. No
+structure BSP is loaded yet, so the tag cache above the tags is free: the
+model data is read to its top, and the geometry made from it goes below,
+from the tags' end (custom_edition_geometry.c); once the models are
+converted, the geometry's room reaches up to the lowest structure BSP. The
+first 22 MB of the tag cache are the Xbox tag cache's pages
+(port/xbox/src/nxdk_memory.c), and the geometry is had at that address, the
+one the GPU reads; the model data, only read, may lie in the 1 MB above. */
+#define XBOX_GEOMETRY_ALIGNMENT 0x1000UL
+
+static byte *xbox_geometry_address(
+	uint32_t tag_cache_offset)
+{
+	if (tag_cache_offset > TAG_CACHE_SIZE)
+		tag_cache_offset = TAG_CACHE_SIZE;
+	return (byte *)physical_memory_get_tag_cache_base_address() + tag_cache_offset;
+}
+
+static uint32_t xbox_geometry_start(
+	struct custom_edition_load_report const *report)
+{
+	return (report->tag_data_bytes + report->resource_tag_bytes + XBOX_GEOMETRY_ALIGNMENT - 1) &
+		~(XBOX_GEOMETRY_ALIGNMENT - 1);
+}
+
+static uint32_t xbox_geometry_end(
+	struct custom_edition_load_report const *report)
+{
+	return report->lowest_structure_bsp_address ?
+		report->lowest_structure_bsp_address - CUSTOM_EDITION_TAG_CACHE_ADDRESS :
+		report->tag_cache_bytes;
+}
+#endif
+
 static boolean custom_edition_cache_models_convert(
 	uint8_t *tag_cache,
 	struct custom_edition_load_report const *report)
 {
 	struct custom_edition_file const *map = &custom_edition_cache_globals.map;
+#ifdef HALO_XBOX
+	uint32_t model_data_offset = (report->tag_cache_bytes - report->model_data_bytes - 1) & ~(XBOX_GEOMETRY_ALIGNMENT - 1);
+	byte *model_data = report->model_data_bytes < report->tag_cache_bytes - xbox_geometry_start(report) &&
+		model_data_offset >= xbox_geometry_start(report) ?
+		tag_cache + model_data_offset :
+		NULL;
+#else
 	byte *model_data = malloc(report->model_data_bytes + 1);
+#endif
 	boolean success = FALSE;
+
+#ifdef HALO_XBOX
+	/* (below the model data, and below the structure BSPs, which keep it) */
+	custom_edition_geometry_span_set(
+		xbox_geometry_address(xbox_geometry_start(report)),
+		xbox_geometry_address(!model_data ? 0 :
+			model_data_offset < xbox_geometry_end(report) ? model_data_offset : xbox_geometry_end(report)));
+#endif
 
 	if (!model_data)
 	{
-		error(_error_silent, "custom edition: out of memory for 0x%lX bytes of model data", (unsigned long)report->model_data_bytes);
+		error(_error_silent, "custom edition: no room for 0x%lX bytes of model data", (unsigned long)report->model_data_bytes);
 	}
 	else if (!map->source.read(map->source.context, report->model_data_offset, report->model_data_bytes, model_data))
 	{
@@ -299,9 +354,17 @@ static boolean custom_edition_cache_models_convert(
 			report,
 			model_data);
 	}
+#ifdef HALO_XBOX
+	/* (the model data's room is the structure BSPs' geometry's now) */
+	if (success)
+	{
+		custom_edition_geometry_span_extend(xbox_geometry_address(xbox_geometry_end(report)));
+	}
+#else
 	/* (the game's free, debug_free, does not take NULL) */
 	if (model_data)
 		free(model_data);
+#endif
 
 	return success;
 }

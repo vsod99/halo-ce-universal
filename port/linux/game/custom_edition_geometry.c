@@ -65,6 +65,17 @@ component this far past 1 stays within that after the packing's rounding
 (every vector of the maps examined is within 1.0001) */
 #define MAXIMUM_COMPRESSIBLE_COMPONENT 1.005f
 
+/* the original Xbox's buffers are drawn in place, from headers of their
+own (geometry_vertex_buffer_new); the other builds' are the game's */
+#ifdef HALO_XBOX
+#define GEOMETRY_HEADER_SIZE 12
+#define GEOMETRY_VERTEX_BUFFER_NEW geometry_vertex_buffer_new
+#define GEOMETRY_TRIANGLE_BUFFER_NEW geometry_strip_buffer_new
+#else
+#define GEOMETRY_VERTEX_BUFFER_NEW rasterizer_vertex_buffer_new
+#define GEOMETRY_TRIANGLE_BUFFER_NEW rasterizer_triangle_buffer_new
+#endif
+
 /* ---------- structures */
 
 /* this build's model geometry and part, as models.c and rasterizer.c each
@@ -182,6 +193,20 @@ struct custom_edition_geometry_globals
 	byte *structure_bsp_vertices;
 	boolean structure_bsp_vertices_contiguous;
 };
+
+#ifdef HALO_XBOX
+typedef char verify_geometry_header_size[
+	sizeof(D3DVertexBuffer) == GEOMETRY_HEADER_SIZE && sizeof(D3DIndexBuffer) == GEOMETRY_HEADER_SIZE ? 1 : -1];
+#endif
+
+/* ---------- prototypes */
+
+#ifdef HALO_XBOX
+static boolean geometry_vertex_buffer_new(struct vertex_buffer *vertex_buffer, long vertex_type, long count,
+	void const *vertices, long buffer_size);
+static boolean geometry_strip_buffer_new(struct triangle_buffer *triangle_buffer, short triangle_type,
+	long triangle_count, void const *strip);
+#endif
 
 /* ---------- globals */
 
@@ -552,13 +577,13 @@ static boolean custom_edition_model_part_convert(
 	csmemset(&part->triangle_buffer, 0, sizeof(part->triangle_buffer));
 	csmemset(&part->vertex_buffer, 0, sizeof(part->vertex_buffer));
 
-	return rasterizer_vertex_buffer_new(
+	return GEOMETRY_VERTEX_BUFFER_NEW(
 			&part->vertex_buffer,
 			_rasterizer_vertex_type_model_compressed,
 			source->vertex_count,
 			vertices,
 			source->vertex_count * vertex_size) &&
-		rasterizer_triangle_buffer_new(
+		GEOMETRY_TRIANGLE_BUFFER_NEW(
 			&part->triangle_buffer,
 			_triangle_buffer_type_precompiled_strip,
 			source->strip_triangle_count,
@@ -678,11 +703,155 @@ place) stay where they are. */
 game's own vertex and index buffers are (physical_memory_map.c), which the
 renderer keeps on the GPU (d3d8_gl.c's mirror: anything outside it is sent
 again at every draw); in the game's heap when that memory is spent */
+#ifdef HALO_XBOX
+/* The original Xbox (port/xbox) has a few MB of contiguous memory free in a
+map: too little for a Custom Edition map's geometry, let alone twice over
+(the compressed vertices, then the Direct3D buffers' copies of them). The
+geometry goes instead in the Custom Edition tag cache, between the tags and
+the lowest structure BSP, which is the Xbox tag cache's own contiguous pages
+(port/xbox/src/nxdk_memory.c), had at their Xbox tag cache address so that
+the GPU reads them (custom_edition_geometry_span_set); and the buffers are
+drawn from it in place, as an Xbox cache's are (geometry_vertex_buffer_new).
+The models' geometry is made first, at the span's start, and a structure
+BSP's after it, until the BSP is unloaded. */
+static struct
+{
+	byte *start;
+	byte *end;
+	byte *models_end;
+	/* the buffers' headers, after the geometry allocated last */
+	unsigned long *headers;
+	unsigned long *headers_end;
+} geometry_span;
+
+void custom_edition_geometry_span_set(
+	void *start,
+	void *end)
+{
+	geometry_span.start = start;
+	geometry_span.end = end;
+	geometry_span.models_end = start;
+
+	return;
+}
+
+void custom_edition_geometry_span_extend(
+	void *end)
+{
+	geometry_span.end = end;
+
+	return;
+}
+
+/* (`models`: the models' geometry, else a structure BSP's; and room for
+`buffer_count` buffers' headers after it) */
 static void *geometry_allocate(
 	unsigned long size,
+	boolean models,
+	long buffer_count,
+	boolean *contiguous)
+{
+	byte *first = models ? geometry_span.start : geometry_span.models_end;
+	unsigned long headers_size = (unsigned long)buffer_count * GEOMETRY_HEADER_SIZE;
+	byte *geometry = NULL;
+
+	*contiguous = FALSE;
+	size = (size + 15) & ~15UL;
+	if (first && headers_size <= (unsigned long)(geometry_span.end - first) &&
+		size <= (unsigned long)(geometry_span.end - first) - headers_size)
+	{
+		geometry = first;
+		geometry_span.headers = (unsigned long *)(first + size);
+		geometry_span.headers_end = (unsigned long *)(first + size + headers_size);
+		if (models)
+			geometry_span.models_end = first + size + headers_size;
+	}
+	else
+	{
+		error(_error_silent, "custom edition: no room for 0x%lX bytes of geometry (0x%lX between the tags and the structure BSPs)",
+			size, first ? (unsigned long)(geometry_span.end - first) : 0UL);
+	}
+
+	return geometry;
+}
+
+static void geometry_free(
+	void *geometry,
+	boolean contiguous)
+{
+	/* (the span's: had again by the next map or structure BSP) */
+	(void)geometry;
+	(void)contiguous;
+}
+
+/* the next header geometry_allocate made room for */
+static void *geometry_header_next(
+	void)
+{
+	unsigned long *header = geometry_span.headers;
+
+	assert(header && header + GEOMETRY_HEADER_SIZE / sizeof(*header) <= geometry_span.headers_end);
+	geometry_span.headers = header + GEOMETRY_HEADER_SIZE / sizeof(*header);
+
+	return header;
+}
+
+/* `vertex_buffer` drawn from `vertices`, in place: a header without
+D3DCOMMON_D3DCREATED, which Release never frees (d3d8_resources.c) */
+static boolean geometry_vertex_buffer_new(
+	struct vertex_buffer *vertex_buffer,
+	long vertex_type,
+	long count,
+	void const *vertices,
+	long buffer_size)
+{
+	D3DVertexBuffer *header = geometry_header_next();
+
+	(void)buffer_size;
+	header->Common = D3DCOMMON_TYPE_VERTEXBUFFER | 1;
+	header->Data = 0;
+	header->Lock = 0;
+	IDirect3DVertexBuffer8_Register(header, (void *)vertices);
+	vertex_buffer->type = (short)vertex_type;
+	vertex_buffer->count = count;
+	vertex_buffer->offset = 0;
+	vertex_buffer->base_address = (void *)vertices;
+	vertex_buffer->hardware_format = header;
+
+	return TRUE;
+}
+
+/* `triangle_buffer` drawn from the strip `strip`, in place (index buffers'
+Data is their memory's own address on the Xbox: d3d8_resources.c) */
+static boolean geometry_strip_buffer_new(
+	struct triangle_buffer *triangle_buffer,
+	short triangle_type,
+	long triangle_count,
+	void const *strip)
+{
+	D3DIndexBuffer *header = geometry_header_next();
+
+	header->Common = D3DCOMMON_TYPE_INDEXBUFFER | 1;
+	header->Data = (unsigned long)strip;
+	header->Lock = 0;
+	triangle_buffer->type = triangle_type;
+	triangle_buffer->count = triangle_count;
+	triangle_buffer->base_address = (void *)strip;
+	triangle_buffer->hardware_format = header;
+
+	return TRUE;
+}
+#else
+static void *geometry_allocate(
+	unsigned long size,
+	boolean models,
+	long buffer_count,
 	boolean *contiguous)
 {
 	void *geometry = XPhysicalAlloc(size, (unsigned long)-1, 0, PAGE_READWRITE);
+
+	(void)models;
+	(void)buffer_count;
 
 	*contiguous = geometry != NULL;
 	if (!geometry)
@@ -704,6 +873,7 @@ static void geometry_free(
 	else
 		system_free(geometry);
 }
+#endif
 
 static boolean structure_material_convert(
 	struct structure_material *material,
@@ -728,7 +898,7 @@ static boolean structure_material_convert(
 			vertex_count * vertex_size,
 			uncompressed_vertices,
 			vertex_count * rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_uncompressed));
-		success = rasterizer_vertex_buffer_new(
+		success = GEOMETRY_VERTEX_BUFFER_NEW(
 			&material->vertices,
 			_rasterizer_vertex_type_environment_compressed,
 			vertex_count,
@@ -744,7 +914,7 @@ static boolean structure_material_convert(
 			lightmap_vertex_count * lightmap_vertex_size,
 			uncompressed_vertices + vertex_count * rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_uncompressed),
 			lightmap_vertex_count * rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_lightmap_uncompressed));
-		success = rasterizer_vertex_buffer_new(
+		success = GEOMETRY_VERTEX_BUFFER_NEW(
 			&material->lightmap_vertices,
 			_rasterizer_vertex_type_environment_lightmap_compressed,
 			lightmap_vertex_count,
@@ -808,6 +978,8 @@ boolean custom_edition_models_convert(
 	globals->model_geometry = geometry_allocate(
 		totals.vertex_count * rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_model_compressed) +
 		totals.strip_index_count * sizeof(*strips) + 1,
+		TRUE,
+		totals.part_count * 2,
 		&globals->model_geometry_contiguous);
 	scratch = malloc(totals.largest_part_vertex_count * sizeof(*scratch) + 1);
 	if (!globals->model_parts || !globals->model_geometry || !globals->palettes || !scratch)
@@ -910,6 +1082,7 @@ boolean custom_edition_structure_bsp_load(
 	unsigned long vertices_size = 0;
 	unsigned long vertices_offset = 0;
 	boolean success = TRUE;
+	long material_count = 0;
 	long lightmap_index;
 
 	assert(!globals->structure_bsp);
@@ -940,12 +1113,15 @@ boolean custom_edition_structure_bsp_load(
 			material->lightmap_vertices.type = _rasterizer_vertex_type_environment_lightmap_compressed;
 			material->lightmap_vertices.count = lightmap_vertex_count;
 			vertices_size += vertex_count * vertex_size + lightmap_vertex_count * lightmap_vertex_size;
+			material_count++;
 		}
 	}
 
 	globals->structure_bsp = structure_bsp;
 	/* (in Xbox memory either way: the material points at them by Xbox address) */
 	globals->structure_bsp_vertices = geometry_allocate(vertices_size + 1,
+		FALSE,
+		material_count * 2,
 		&globals->structure_bsp_vertices_contiguous);
 	if (!globals->structure_bsp_vertices)
 	{
