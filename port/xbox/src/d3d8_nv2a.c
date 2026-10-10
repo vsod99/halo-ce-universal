@@ -65,6 +65,13 @@ void halo_screen_ui_offset(unsigned char centered)
 	(void)centered;
 }
 
+/* the screen effects' convolutions (rasterizer_xbox_screen_effect.c): the
+Xbox's own pixels */
+float halo_screen_scale(void)
+{
+	return 1.0f;
+}
+
 /* ---------- the GL renderer's own passes (port/linux/src/d3d8_gl.c): the
 Xbox's shadow maps at its own size, no antialiasing pass after the 3D view,
 and its vertex shaders lit as written */
