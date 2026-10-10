@@ -448,7 +448,53 @@ class Sampler:
             self.connection.sendall(b"+")
             return packet
 
+    def read(self, address: int, size: int) -> bytes:
+        self.send(f"m{address:x},{size:x}")
+        reply = self.receive()
+        return b"" if reply.startswith("E") else bytes.fromhex(reply)
+
+    def stack(self) -> list:
+        """the stopped processor's instruction pointer, then the return
+        addresses above it: the first code address on the stack (the caller
+        of a function without a frame, such as pdclib's memset), then the
+        chain of frame pointers (the game is built with them)"""
+        registers = self.read_registers()
+        esp, ebp, eip = registers[4], registers[5], registers[8]
+        addresses = [eip]
+        if eip >= 0x80000000:
+            return addresses
+        words = self.read(esp, 32)
+        for offset in range(0, len(words) - 3, 4):
+            word = int.from_bytes(words[offset:offset + 4], "little")
+            if self.code[0] <= word < self.code[1]:
+                addresses.append(word)
+                break
+        for _ in range(16):
+            if ebp < 0x1000:
+                break
+            frame = self.read(ebp, 8)
+            if len(frame) < 8:
+                break
+            ebp, address = int.from_bytes(frame[:4], "little"), int.from_bytes(frame[4:], "little")
+            if not self.code[0] <= address < self.code[1]:
+                break
+            if address != addresses[-1]:
+                addresses.append(address)
+        return addresses
+
+    def read_registers(self) -> list:
+        self.send("g")
+        reply = bytes.fromhex(self.receive())
+        return [int.from_bytes(reply[index:index + 4], "little") for index in range(0, 40, 4)]
+
     def sample(self) -> None:
+        # (halo.exe's code: its .text section in the link map, loaded at 0x10000)
+        self.code = (0x11000, 0x11000)
+        for line in (ROOT / "build/xbox/halo.exe.map").read_text(errors="replace").splitlines()[:40]:
+            match = re.match(r"\s*0001:00000000 ([0-9a-f]{8})H \.text", line)
+            if match:
+                self.code = (0x11000, 0x11000 + int(match.group(1), 16))
+                break
         time.sleep(self.start)
         try:
             self.connection = socket.create_connection(("127.0.0.1", self.port), timeout=10)
@@ -463,9 +509,7 @@ class Sampler:
                 time.sleep(self.interval)
                 self.connection.sendall(b"\x03")
                 self.receive()
-                # (register 8: eip)
-                self.send("p8")
-                self.samples.append(int.from_bytes(bytes.fromhex(self.receive()), "little"))
+                self.samples.append(self.stack())
                 self.send("c")
             # (detached without waiting for its answer: the machine runs on)
             self.send("D")
@@ -477,8 +521,12 @@ class Sampler:
     def report(self) -> None:
         if not self.samples:
             return
+        # (the raw stacks, for another look: tools/xbox_dev.py profile RUN)
+        (self.out / "samples.json").write_text(json.dumps(self.samples))
+        # (return addresses are symbolized at the call: the byte before them)
+        stacks = [[stack[0]] + [address - 1 for address in stack[1:]] for stack in self.samples]
         symbolizer = expand(self.config["tools"].get("llvm_bin", "/opt/homebrew/opt/llvm/bin")) / "llvm-symbolizer"
-        addresses = sorted({address for address in self.samples if address < 0x80000000})
+        addresses = sorted({address for stack in stacks for address in stack if address < 0x80000000})
         names = {}
         if addresses:
             result = subprocess.run([str(symbolizer), "--output-style=JSON", "--no-inlines", "--relative-address",
@@ -506,24 +554,43 @@ class Sampler:
             index = bisect.bisect_right(starts, address) - 1
             if name == "?" and index >= 0:
                 names[address] = (symbols[index][1], symbols[index][2].split(":")[0])
-        functions, folders = {}, {}
-        for address in self.samples:
+
+        def describe(address: int) -> tuple:
             if address >= 0x80000000:
-                name, folder = "(kernel)", "(kernel)"
-            else:
-                name, where = names.get(address, ("?", ""))
-                where = os.path.relpath(where, ROOT) if where.startswith("/") else where
-                folder = (os.path.dirname(where) or where) if where else "(unknown)"
-                name = name if name not in ("?", "") else f"(unknown in {folder})"
+                return "(kernel)", "(kernel)"
+            name, where = names.get(address, ("?", ""))
+            where = os.path.relpath(where, ROOT) if where.startswith("/") else where
+            folder = (os.path.dirname(where) or where) if where else "(unknown)"
+            return (name if name not in ("?", "") else f"(unknown in {folder})"), folder
+
+        functions, folders, inclusive, callers = {}, {}, {}, {}
+        for stack in stacks:
+            frames = [describe(address)[0] for address in stack]
+            name, folder = describe(stack[0])
             functions[name] = functions.get(name, 0) + 1
             folders[folder] = folders.get(folder, 0) + 1
-        total = len(self.samples)
+            for frame in set(frames):
+                inclusive[frame] = inclusive.get(frame, 0) + 1
+            for index, frame in enumerate(frames):
+                if frame in frames[:index]:
+                    continue
+                caller = next((other for other in frames[index + 1:] if other != frame), "(none found)")
+                callers.setdefault(frame, {})
+                callers[frame][caller] = callers[frame].get(caller, 0) + 1
+        total = len(stacks)
+
+        def table(counts: dict, limit: int, indent: str = "") -> list:
+            return [f"{indent}{count * 100 / total:6.1f}%  {name}" for name, count in
+                    sorted(counts.items(), key=lambda item: -item[1])[:limit]]
         lines = [f"{total} samples, about every {self.interval * 1000:.0f} ms", "", "by source folder:"]
-        lines += [f"{count * 100 / total:6.1f}%  {name}" for name, count in
-                  sorted(folders.items(), key=lambda item: -item[1])[:30]]
-        lines += ["", "by function:"]
-        lines += [f"{count * 100 / total:6.1f}%  {name}" for name, count in
-                  sorted(functions.items(), key=lambda item: -item[1])[:60]]
+        lines += table(folders, 30)
+        lines += ["", "by function (where the processor was):"]
+        lines += table(functions, 60)
+        lines += ["", "by function and what it called (anywhere on the stack):"]
+        lines += table(inclusive, 60)
+        lines += ["", "the callers of the busiest functions (anywhere on the stack):"]
+        for name, _ in sorted(inclusive.items(), key=lambda item: -item[1])[:25]:
+            lines += [f"  {name}:"] + table(callers[name], 8, "    ")
         (self.out / "profile.txt").write_text("\n".join(lines) + "\n")
         print(f"(profile: {self.out.relative_to(ROOT) / 'profile.txt'})", flush=True)
 
@@ -1149,8 +1216,16 @@ def main() -> None:
                              help="an environment variable for the host alone; repeatable")
     link_parser.add_argument("--join-env", action="append", default=[], metavar="NAME=VALUE",
                              help="an environment variable for the joining machine alone; repeatable")
+    profile_parser = sub.add_parser("profile", help="write a run's profile.txt again from its samples.json "
+                                                    "(halo.exe as it is now)")
+    profile_parser.add_argument("run", type=Path, help="the run's folder (build/xbox/runs/...)")
     args = parser.parse_args()
     config = load_config()
+    if args.command == "profile":
+        sampler = Sampler(config, 0, 0, 0, args.run.resolve())
+        sampler.samples = json.loads((args.run / "samples.json").read_text())
+        sampler.report()
+        return
     if args.command == "doctor":
         sys.exit(doctor(config))
     if args.command == "build":
