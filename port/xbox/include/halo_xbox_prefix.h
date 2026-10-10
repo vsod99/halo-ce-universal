@@ -45,6 +45,26 @@ COMDAT linkage, and the build supplies the copies MSVC would have left
 #define _InterlockedExchangeAdd halo_linux_InterlockedExchangeAdd
 #define _InterlockedIncrement halo_linux_InterlockedIncrement
 
+/* ---------- the game's x87 conversions
+
+The game's FISTP conversions are `(long)__builtin_rint(x)` in its sources
+(cseries.h's fast_ftol, bitmaps_inlines.h's colors, decals.c). clang calls
+pdclib's rint (an FRNDINT) and truncates with two control word changes; here
+they are one FISTP in the current rounding mode, as the Xbox game's were:
+the same integer, and the conversion back to double folds away. Every use is
+cast to an integer at once. (b30's particles' sprites, mostly their colors:
+6.6% of the processor time in xemu before, 2.1% after.) */
+
+static __inline__ long halo_xbox_fistp(double value)
+{
+	long result;
+
+	__asm__ ("fistpl %0" : "=m"(result) : "t"(value) : "st");
+	return result;
+}
+
+#define __builtin_rint(value) ((double)halo_xbox_fistp(value))
+
 /* ---------- structured exception handling (as halo_windows_prefix.h) */
 
 #define __try if (1)
