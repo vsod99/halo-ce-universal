@@ -33,12 +33,15 @@ Edition vertices (docs/custom_edition_caches.md).
 #include "structures/structure_bsp_definitions.h"
 #include "cache_file_formats.h"
 #include "custom_edition_cache.h"
+#include "memory/data.h"
+#include "memory/lruv_cache.h"
 
 #include <math.h>
 #include <stdlib.h>
 #include <xtl.h>
 #ifdef HALO_XBOX
 #include "cache/physical_memory_map.h"
+#include "cache/texture_cache.h"
 #endif
 
 /* ---------- constants */
@@ -85,8 +88,40 @@ own (geometry_vertex_buffer_new); the other builds' are the game's */
 define them for themselves (no header declares them) */
 struct model_geometry
 {
-	byte reserved[0x24];
+	unsigned long flags;
+	/* (the tag's padding) on the original Xbox, a geometry read from the
+	map when drawn: GEOMETRY_CACHE_SIGNATURE, and its block in the geometry
+	cache, or NONE */
+	unsigned long cache_signature;
+	long cache_block_index;
+	byte pad[0x18];
 	struct tag_block parts;
+};
+
+/* the nodes a part's vertices name, by their place among them */
+struct part_nodes
+{
+	byte count;
+	byte nodes[MAXIMUM_NODES_PER_MODEL_GEOMETRY_PART];
+};
+
+/* Where a part read when drawn (on the original Xbox) has its vertices and
+strip in the map, kept in the room of its tag's empty blocks, whose counts
+stay 0 */
+struct part_source
+{
+	long empty_uncompressed_vertex_count;
+	/* from the start of the model data, and of its strips */
+	unsigned long vertex_offset;
+	unsigned long strip_offset;
+	long empty_compressed_vertex_count;
+	/* the nodes the map's vertices are named again through, or NULL when
+	they stay as they are: the model's nodes by their place among the
+	part's own when `nodes_made_local`, else the reverse */
+	struct part_nodes const *nodes;
+	unsigned long nodes_made_local;
+	long empty_triangle_count;
+	unsigned long unused[2];
 };
 
 struct model_geometry_part
@@ -100,9 +135,13 @@ struct model_geometry_part
 	real centroid_primary_node_weight;
 	real centroid_secondary_node_weight;
 	real_point3d centroid;
-	struct tag_block uncompressed_vertices;
-	struct tag_block compressed_vertices;
-	struct tag_block triangles;
+	union
+	{
+		/* its uncompressed vertices, compressed vertices and triangles:
+		none, as in Xbox caches (the game draws from the buffers alone) */
+		struct tag_block blocks[3];
+		struct part_source source;
+	} data;
 	struct triangle_buffer triangle_buffer;
 	struct vertex_buffer vertex_buffer;
 };
@@ -147,6 +186,12 @@ typedef char verify_model_geometry_size[
 	sizeof(struct model_geometry) == 0x30 ? 1 : -1];
 typedef char verify_model_geometry_part_size[
 	sizeof(struct model_geometry_part) == 0x68 ? 1 : -1];
+typedef char verify_model_geometry_parts_offset[
+	offsetof(struct model_geometry, parts) == 0x24 ? 1 : -1];
+typedef char verify_part_source_size[
+	sizeof(struct part_source) == 3 * sizeof(struct tag_block) &&
+	offsetof(struct part_source, empty_compressed_vertex_count) == sizeof(struct tag_block) &&
+	offsetof(struct part_source, empty_triangle_count) == 2 * sizeof(struct tag_block) ? 1 : -1];
 typedef char verify_custom_edition_model_part_size[
 	sizeof(struct custom_edition_model_part) == 0x84 ? 1 : -1];
 typedef char verify_custom_edition_model_part_vertex_offset[
@@ -163,8 +208,7 @@ MAXIMUM_NODES_PER_MODEL_GEOMETRY_PART to a part. */
 struct part_palette
 {
 	struct vertex_buffer const *vertex_buffer;
-	byte node_count;
-	byte nodes[MAXIMUM_NODES_PER_MODEL_GEOMETRY_PART];
+	struct part_nodes nodes;
 };
 
 /* what the models of a map need, counted before any is converted */
@@ -176,6 +220,8 @@ struct model_geometry_totals
 	long largest_part_vertex_count;
 	/* the parts of models of more nodes than the renderer skins at once */
 	long many_node_part_count;
+	/* the parts of the others whose vertices name their own nodes */
+	long local_node_part_count;
 };
 
 struct custom_edition_geometry_globals
@@ -189,6 +235,29 @@ struct custom_edition_geometry_globals
 	/* the parts of the models of many nodes, in the order they were converted */
 	struct part_palette *palettes;
 	long palette_count;
+#ifdef HALO_XBOX
+	/* the original Xbox's geometry read from the map when drawn: the cache
+	(lruv_cache.c), whose blocks' addresses count from `geometry_cache_base`,
+	and whether the texture cache lent its memory; where the model data
+	lies in the map; the nodes of the parts whose vertices name their own,
+	of models drawn with all their nodes; and counts for the log */
+	struct lruv_cache *geometry_cache;
+	byte *geometry_bsp_headers;
+	unsigned long geometry_bsp_headers_size;
+	byte *geometry_cache_base;
+	unsigned long geometry_cache_bytes;
+	boolean geometry_cache_lent;
+	unsigned long model_data_offset;
+	unsigned long model_index_data_offset;
+	struct part_nodes *part_nodes;
+	long part_nodes_count;
+	long geometry_cache_ticks;
+	long geometries_read;
+	unsigned long geometry_bytes_read;
+	long geometries_not_drawn;
+	long geometries_resident;
+	unsigned long geometry_bytes_resident;
+#endif
 
 	/* the structure BSP whose materials have buffers, and the compressed
 	vertices those were made from */
@@ -342,6 +411,13 @@ static boolean geometry_room_begin(
 	return TRUE;
 }
 
+/* the room's bytes for the models (none when the tags reach past it) */
+static unsigned long geometry_room_models_bytes(
+	void)
+{
+	return geometry_room.end > geometry_room.start ? (unsigned long)(geometry_room.end - geometry_room.start) : 0;
+}
+
 /* (port_config.c) */
 int config_boolean(char const *name);
 
@@ -372,12 +448,12 @@ and game.custom_edition_reduce_detail allows it, draws every permutation's
 high and super high levels of detail with its medium geometry, and gives the
 geometries no permutation names then no parts, so that they are not
 converted. (custom_edition_cache_measure_models measured the same before the
-map was let run.) */
-static void custom_edition_models_reduce(
+map was let run.) Returns the bytes the models' geometry then takes. */
+static unsigned long custom_edition_models_reduce(
 	byte *tag_cache,
 	unsigned long loaded_bytes)
 {
-	unsigned long room = (unsigned long)(geometry_room.end - geometry_room.start);
+	unsigned long room = geometry_room_models_bytes();
 	unsigned long all_bytes = 0;
 	unsigned long reduced_bytes = 0;
 	long reduced_geometry_count = 0;
@@ -395,7 +471,7 @@ static void custom_edition_models_reduce(
 	}
 	if (all_bytes <= room || !config_boolean("game.custom_edition_reduce_detail"))
 	{
-		return;
+		return all_bytes;
 	}
 	tag_index = NONE;
 	while ((model = custom_edition_cache_tag_next(tag_cache, loaded_bytes, GBXMODEL_GROUP_TAG, sizeof(*model), &tag_index)) != NULL)
@@ -451,7 +527,7 @@ static void custom_edition_models_reduce(
 	error(_error_silent, "custom edition: the models' 0x%lX bytes of geometry do not fit the Xbox's 0x%lX: drawn at medium detail at most, 0x%lX bytes (%ld geometries left out)",
 		all_bytes, room, reduced_bytes, reduced_geometry_count);
 
-	return;
+	return reduced_bytes;
 }
 
 /* the models converted: the room reaches to the lowest structure BSP */
@@ -596,6 +672,344 @@ static void geometry_compress_vertices(
 			chunk,
 			number * size);
 	}
+
+	return;
+}
+
+/* ---------- the original Xbox's geometry read when drawn
+
+A map whose models' geometry does not fit the room, even at medium detail
+when custom_edition_models_reduce makes it so, has each model geometry (a
+permutation's level of detail) read from the map, compressed and given
+buffers when it is first drawn, as Halo PC reads its own models' vertices
+into a cache when they are drawn: into a cache of the game's own kind
+(lruv_cache.c, the texture cache's), whose blocks go once their room is
+wanted and the GPU has drawn from them. The cache is the room, after the
+room kept for the structure BSPs' headers, when that is large enough; else
+pages the texture cache lends (texture_cache_lend_memory). A geometry the
+cache has no room for, every block in the way drawn this frame or not yet by
+the GPU, is not drawn this frame (custom_edition_model_geometry_ready). */
+#define GEOMETRY_CACHE_SIGNATURE 0x67656F63UL /* 'geoc' */
+#define GEOMETRY_CACHE_PAGE_SIZE_BITS 12
+#define GEOMETRY_CACHE_MINIMUM_ROOM 0x300000UL
+#define GEOMETRY_CACHE_LENT_BYTES 0x400000UL
+/* frames between the cache's lines in the log (30 s at 30 fps) */
+#define GEOMETRY_CACHE_LOG_FRAMES 900
+
+static unsigned long geometry_cache_round(
+	unsigned long size)
+{
+	return (size + 15) & ~15UL;
+}
+
+/* the bytes of the block of `geometry`: its buffers' headers, then each
+part's compressed vertices and strip */
+static unsigned long geometry_cache_bytes(
+	struct model_geometry const *geometry)
+{
+	unsigned long bytes = geometry_cache_round((unsigned long)geometry->parts.count * 2 * GEOMETRY_HEADER_SIZE);
+	long part_index;
+
+	for (part_index = 0; part_index < geometry->parts.count; part_index++)
+	{
+		struct model_geometry_part const *part = TAG_BLOCK_GET_ELEMENT(
+			&geometry->parts,
+			part_index,
+			struct model_geometry_part);
+
+		bytes += geometry_cache_round((unsigned long)part->vertex_buffer.count *
+				rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_model_compressed)) +
+			geometry_cache_round((unsigned long)(part->triangle_buffer.count + 2) * sizeof(word));
+	}
+
+	return bytes;
+}
+
+static struct model_geometry *geometry_cache_block_geometry(
+	long block_index)
+{
+	struct lruv_cache_block const *block = datum_get(
+		custom_edition_geometry_globals.geometry_cache->blocks,
+		block_index);
+
+	return (struct model_geometry *)block->user_data;
+}
+
+/* whether the GPU has yet to draw from the block's vertices */
+static boolean geometry_cache_locked_block_proc(
+	long block_index)
+{
+	struct model_geometry const *geometry = geometry_cache_block_geometry(block_index);
+	long part_index;
+
+	for (part_index = 0; part_index < geometry->parts.count; part_index++)
+	{
+		struct model_geometry_part const *part = TAG_BLOCK_GET_ELEMENT(
+			&geometry->parts,
+			part_index,
+			struct model_geometry_part);
+
+		if (part->vertex_buffer.hardware_format &&
+			IDirect3DVertexBuffer8_IsBusy((D3DVertexBuffer *)part->vertex_buffer.hardware_format))
+		{
+			return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
+/* the block's geometry goes, once the GPU has drawn from it, to be read
+again when next drawn */
+static void geometry_cache_delete_block_proc(
+	long block_index)
+{
+	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
+	struct model_geometry *geometry = geometry_cache_block_geometry(block_index);
+	long part_index;
+
+	for (part_index = 0; part_index < geometry->parts.count; part_index++)
+	{
+		struct model_geometry_part *part = TAG_BLOCK_GET_ELEMENT(
+			&geometry->parts,
+			part_index,
+			struct model_geometry_part);
+
+		if (part->vertex_buffer.hardware_format)
+			IDirect3DVertexBuffer8_BlockUntilNotBusy((D3DVertexBuffer *)part->vertex_buffer.hardware_format);
+		part->vertex_buffer.base_address = NULL;
+		part->vertex_buffer.hardware_format = NULL;
+		part->triangle_buffer.base_address = NULL;
+		part->triangle_buffer.hardware_format = NULL;
+	}
+	geometry->cache_block_index = NONE;
+	globals->geometries_resident--;
+	globals->geometry_bytes_resident -= geometry_cache_bytes(geometry);
+
+	return;
+}
+
+/* Reads the vertices of `part` from the map, a chunk at a time, compressed
+to `vertices`, naming the nodes the renderer skins it with, and its strip to
+`strip`. */
+static void geometry_cache_part_read(
+	struct model_geometry_part const *part,
+	byte *vertices,
+	word *strip)
+{
+	static struct model_vertex_uncompressed chunk[0x4000 / sizeof(struct model_vertex_uncompressed)];
+	struct custom_edition_geometry_globals const *globals = &custom_edition_geometry_globals;
+	struct part_source const *source = &part->data.source;
+	long vertex_size = rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_model_compressed);
+	long vertex_count = part->vertex_buffer.count;
+	long strip_index_count = part->triangle_buffer.count + 2;
+	long first;
+	long index;
+
+	for (first = 0; first < vertex_count; first += (long)NUMBEROF(chunk))
+	{
+		long number = MIN((long)NUMBEROF(chunk), vertex_count - first);
+
+		custom_edition_cache_read(
+			NONE,
+			(long)(globals->model_data_offset + source->vertex_offset + (unsigned long)first * sizeof(*chunk)),
+			number * (long)sizeof(*chunk),
+			chunk);
+		if (source->nodes)
+		{
+			for (index = 0; index < number; index++)
+			{
+				long slot;
+
+				for (slot = 0; slot < 2; slot++)
+				{
+					short *node = &chunk[index].nodes[slot];
+
+					if (source->nodes_made_local)
+					{
+						short local = 0;
+
+						while (local < source->nodes->count && source->nodes->nodes[local] != *node)
+							local++;
+						*node = local < source->nodes->count ? local : 0;
+					}
+					else
+					{
+						*node = *node >= 0 && *node < source->nodes->count ? source->nodes->nodes[*node] : 0;
+					}
+				}
+			}
+		}
+		rasterizer_geometry_compress_vertices(
+			_rasterizer_vertex_type_model_uncompressed,
+			number,
+			vertices + first * vertex_size,
+			number * vertex_size,
+			chunk,
+			number * (long)sizeof(*chunk));
+	}
+	custom_edition_cache_read(
+		NONE,
+		(long)(globals->model_data_offset + globals->model_index_data_offset + source->strip_offset),
+		strip_index_count * (long)sizeof(*strip),
+		strip);
+	/* (checked when the map was loaded: a map changed since names vertex 0) */
+	for (index = 0; index < strip_index_count; index++)
+	{
+		if (strip[index] >= vertex_count)
+			strip[index] = 0;
+	}
+
+	return;
+}
+
+/* Reads `geometry` into a block of the cache, its parts' buffers there;
+FALSE when the cache has no room for it this frame. */
+static boolean geometry_cache_load(
+	struct model_geometry *geometry)
+{
+	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
+	long vertex_size = rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_model_compressed);
+	unsigned long bytes = geometry_cache_bytes(geometry);
+	unsigned long headers_size = geometry_cache_round((unsigned long)geometry->parts.count * 2 * GEOMETRY_HEADER_SIZE);
+	long block_index = lruv_block_new(globals->geometry_cache, (long)bytes);
+	struct lruv_cache_block *block;
+	byte *data;
+	long part_index;
+
+	if (block_index == NONE)
+	{
+		globals->geometries_not_drawn++;
+		return FALSE;
+	}
+	block = datum_get(globals->geometry_cache->blocks, block_index);
+	block->user_data = (long)geometry;
+	data = globals->geometry_cache_base + (unsigned long)lruv_block_get_address(globals->geometry_cache, block_index);
+	geometry_room.headers = (unsigned long *)data;
+	geometry_room.headers_end = (unsigned long *)(data + headers_size);
+	data += headers_size;
+	for (part_index = 0; part_index < geometry->parts.count; part_index++)
+	{
+		struct model_geometry_part *part = TAG_BLOCK_GET_ELEMENT(
+			&geometry->parts,
+			part_index,
+			struct model_geometry_part);
+		long vertex_count = part->vertex_buffer.count;
+		long triangle_count = part->triangle_buffer.count;
+		byte *vertices = data;
+		word *strip = (word *)(data + geometry_cache_round((unsigned long)vertex_count * vertex_size));
+
+		data = (byte *)strip + geometry_cache_round((unsigned long)(triangle_count + 2) * sizeof(word));
+		geometry_cache_part_read(part, vertices, strip);
+		geometry_vertex_buffer_new(&part->vertex_buffer, _rasterizer_vertex_type_model_compressed, vertex_count, vertices, 0);
+		geometry_strip_buffer_new(&part->triangle_buffer, _triangle_buffer_type_precompiled_strip, triangle_count, strip);
+	}
+	geometry->cache_block_index = block_index;
+	globals->geometries_read++;
+	globals->geometry_bytes_read += bytes;
+	globals->geometries_resident++;
+	globals->geometry_bytes_resident += bytes;
+
+	return TRUE;
+}
+
+/* Makes the cache, between the tags and the lowest structure BSP when there
+is room enough, else in pages the texture cache lends; FALSE, logged, when
+it cannot be had. The structure BSPs' buffers' headers, which the processor
+alone reads, are kept room at its start (geometry_cache_bsp_headers_room),
+so that the tags may reach almost to the lowest structure BSP. */
+static boolean geometry_cache_new(
+	struct custom_edition_load_report const *report)
+{
+	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
+	unsigned long headers_size = (geometry_room_bsp_headers_size(report) + GEOMETRY_ALIGNMENT - 1) & ~(GEOMETRY_ALIGNMENT - 1);
+	byte *first = geometry_room.start;
+	byte *last = geometry_room_address(geometry_room_limit(report));
+	byte *memory;
+	unsigned long bytes;
+	long page_count;
+
+	globals->model_data_offset = report->model_data_offset;
+	globals->model_index_data_offset = report->model_index_data_offset;
+	if (last > first && (unsigned long)(last - first) >= headers_size + GEOMETRY_CACHE_MINIMUM_ROOM)
+	{
+		memory = first;
+		bytes = (unsigned long)(last - first) & ~((1UL << GEOMETRY_CACHE_PAGE_SIZE_BITS) - 1);
+		globals->geometry_cache_lent = FALSE;
+	}
+	else
+	{
+		bytes = headers_size + GEOMETRY_CACHE_LENT_BYTES;
+		memory = texture_cache_lend_memory((long)bytes);
+		globals->geometry_cache_lent = memory != NULL;
+	}
+	globals->geometry_bsp_headers = memory;
+	globals->geometry_bsp_headers_size = headers_size;
+	globals->geometry_cache_base = memory ? memory + headers_size : NULL;
+	globals->geometry_cache_bytes = bytes - headers_size;
+	page_count = (long)(globals->geometry_cache_bytes >> GEOMETRY_CACHE_PAGE_SIZE_BITS);
+	globals->geometry_cache = globals->geometry_cache_base ?
+		lruv_new(
+			"custom edition geometry",
+			page_count,
+			GEOMETRY_CACHE_PAGE_SIZE_BITS,
+			page_count,
+			geometry_cache_delete_block_proc,
+			geometry_cache_locked_block_proc) :
+		NULL;
+	if (!globals->geometry_cache)
+	{
+		error(_error_silent, "custom edition: no memory for a cache of model geometry");
+		return FALSE;
+	}
+	globals->geometry_cache_ticks = 0;
+	globals->geometries_read = 0;
+	globals->geometry_bytes_read = 0;
+	globals->geometries_not_drawn = 0;
+	globals->geometries_resident = 0;
+	globals->geometry_bytes_resident = 0;
+
+	return TRUE;
+}
+
+/* the models converted: the structure BSPs' headers go in the room kept for
+them at the cache's start */
+static void geometry_cache_bsp_headers_room(
+	void)
+{
+	struct custom_edition_geometry_globals const *globals = &custom_edition_geometry_globals;
+
+	geometry_room.models_end = globals->geometry_bsp_headers;
+	geometry_room.end = globals->geometry_bsp_headers + globals->geometry_bsp_headers_size;
+
+	return;
+}
+
+static void geometry_cache_dispose(
+	void)
+{
+	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
+
+	if (globals->geometry_cache)
+	{
+		lruv_flush(globals->geometry_cache);
+		lruv_delete(globals->geometry_cache);
+		globals->geometry_cache = NULL;
+	}
+	if (globals->geometry_cache_lent)
+	{
+		texture_cache_lend_memory(0);
+		globals->geometry_cache_lent = FALSE;
+	}
+	globals->geometry_cache_base = NULL;
+	globals->geometry_bsp_headers = NULL;
+	globals->geometry_bsp_headers_size = 0;
+	if (globals->part_nodes)
+	{
+		free(globals->part_nodes);
+		globals->part_nodes = NULL;
+	}
+	globals->part_nodes_count = 0;
 
 	return;
 }
@@ -949,6 +1363,8 @@ static boolean custom_edition_model_verify(
 			totals->part_count++;
 			if (model_has_many_nodes(model))
 				totals->many_node_part_count++;
+			else if (TEST_FLAG(model->flags, _gbxmodel_parts_have_local_nodes_bit))
+				totals->local_node_part_count++;
 			totals->vertex_count += part->vertex_count;
 			totals->strip_index_count += part->strip_triangle_count + 2;
 			totals->largest_part_vertex_count = MAX(totals->largest_part_vertex_count, part->vertex_count);
@@ -971,6 +1387,55 @@ static short part_model_node(
 
 	return node_index;
 }
+
+/* `part` this build's part for the Custom Edition part `source`, without
+buffers yet */
+static void model_part_header_convert(
+	struct model_geometry_part *part,
+	struct custom_edition_model_part const *source)
+{
+	part->flags = source->flags & ~FLAG(_model_geometry_part_local_nodes_bit);
+	part->shader_index = source->shader_index;
+	part->previous_part_index = source->previous_part_index;
+	part->next_part_index = source->next_part_index;
+	part->centroid_primary_node_index = source->centroid_primary_node_index;
+	part->centroid_secondary_node_index = source->centroid_secondary_node_index;
+	part->centroid_primary_node_weight = source->centroid_primary_node_weight;
+	part->centroid_secondary_node_weight = source->centroid_secondary_node_weight;
+	part->centroid = source->centroid;
+	/* empty, as in Xbox caches (whatever the map held: the game draws from
+	the buffers alone) */
+	csmemset(&part->data, 0, sizeof(part->data));
+	csmemset(&part->triangle_buffer, 0, sizeof(part->triangle_buffer));
+	csmemset(&part->vertex_buffer, 0, sizeof(part->vertex_buffer));
+
+	return;
+}
+
+#ifdef HALO_XBOX
+/* Makes `part` this build's part for the Custom Edition part `source`, its
+geometry read from the map when drawn (geometry_cache_load): buffers of its
+counts without memory, and where its vertices and strip lie, their nodes
+named again through `nodes` (part_source). */
+static void custom_edition_model_part_defer(
+	struct model_geometry_part *part,
+	struct custom_edition_model_part const *source,
+	struct part_nodes const *nodes,
+	boolean nodes_made_local)
+{
+	model_part_header_convert(part, source);
+	part->data.source.vertex_offset = source->vertex_offset;
+	part->data.source.strip_offset = source->strip_offset;
+	part->data.source.nodes = nodes;
+	part->data.source.nodes_made_local = nodes_made_local;
+	part->vertex_buffer.type = _rasterizer_vertex_type_model_compressed;
+	part->vertex_buffer.count = source->vertex_count;
+	part->triangle_buffer.type = _triangle_buffer_type_precompiled_strip;
+	part->triangle_buffer.count = source->strip_triangle_count;
+
+	return;
+}
+#endif
 
 /* Makes `part` this build's part for the Custom Edition part `source`,
 compressing its vertices (by way of `scratch`, room for all of them) to
@@ -1011,23 +1476,7 @@ static boolean custom_edition_model_part_convert(
 		scratch,
 		source->vertex_count * uncompressed_vertex_size);
 	csmemcpy(strip, source_strip, strip_index_count * sizeof(*strip));
-
-	part->flags = source->flags & ~FLAG(_model_geometry_part_local_nodes_bit);
-	part->shader_index = source->shader_index;
-	part->previous_part_index = source->previous_part_index;
-	part->next_part_index = source->next_part_index;
-	part->centroid_primary_node_index = source->centroid_primary_node_index;
-	part->centroid_secondary_node_index = source->centroid_secondary_node_index;
-	part->centroid_primary_node_weight = source->centroid_primary_node_weight;
-	part->centroid_secondary_node_weight = source->centroid_secondary_node_weight;
-	part->centroid = source->centroid;
-	/* empty, as in Xbox caches (whatever the map held: the game draws from
-	the buffers alone) */
-	csmemset(&part->uncompressed_vertices, 0, sizeof(part->uncompressed_vertices));
-	csmemset(&part->compressed_vertices, 0, sizeof(part->compressed_vertices));
-	csmemset(&part->triangles, 0, sizeof(part->triangles));
-	csmemset(&part->triangle_buffer, 0, sizeof(part->triangle_buffer));
-	csmemset(&part->vertex_buffer, 0, sizeof(part->vertex_buffer));
+	model_part_header_convert(part, source);
 
 	return GEOMETRY_VERTEX_BUFFER_NEW(
 			&part->vertex_buffer,
@@ -1044,14 +1493,16 @@ static boolean custom_edition_model_part_convert(
 
 /* Converts every part of `model`, repacking each geometry's parts from
 Custom Edition's size to this build's in place, and records them in the
-globals; the geometry goes to `*vertices` and `*strips`, which advance. */
+globals; the geometry goes to `*vertices` and `*strips`, which advance, or
+on the original Xbox is read when drawn when `on_demand`. */
 static boolean custom_edition_model_convert(
 	struct model *model,
 	struct custom_edition_load_report const *report,
 	byte *model_data,
 	struct model_vertex_uncompressed *scratch,
 	struct model_vertex_compressed **vertices,
-	word **strips)
+	word **strips,
+	boolean on_demand)
 {
 	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
 	boolean local_nodes = TEST_FLAG(model->flags, _gbxmodel_parts_have_local_nodes_bit);
@@ -1068,6 +1519,10 @@ static boolean custom_edition_model_convert(
 			struct model_geometry);
 		long part_index;
 
+#ifdef HALO_XBOX
+		geometry->cache_signature = on_demand && geometry->parts.count ? GEOMETRY_CACHE_SIGNATURE : 0;
+		geometry->cache_block_index = NONE;
+#endif
 		/* a part is never written over a Custom Edition part not yet read:
 		this build's parts are smaller, and each is read first */
 		for (part_index = 0; part_index < geometry->parts.count; part_index++)
@@ -1080,10 +1535,13 @@ static boolean custom_edition_model_convert(
 				&geometry->parts,
 				part_index,
 				struct model_geometry_part);
-			struct model_vertex_uncompressed *source_vertices;
-			word *source_strip;
+			struct model_vertex_uncompressed *source_vertices = NULL;
+			word *source_strip = NULL;
+			struct part_nodes const *nodes = NULL;
+			boolean nodes_made_local = FALSE;
 
-			part_data(&source, report, model_data, &source_vertices, &source_strip);
+			if (!on_demand)
+				part_data(&source, report, model_data, &source_vertices, &source_strip);
 			globals->model_parts[globals->model_part_count++] = part;
 			/* a part with local nodes names its centroid's nodes among them
 			too, and the renderer places a transparent part by them */
@@ -1092,6 +1550,40 @@ static boolean custom_edition_model_convert(
 				source.centroid_primary_node_index = part_model_node(&source, source.centroid_primary_node_index);
 				source.centroid_secondary_node_index = part_model_node(&source, source.centroid_secondary_node_index);
 			}
+			if (part_palettes)
+			{
+				struct part_palette *palette = &globals->palettes[globals->palette_count++];
+
+				palette->vertex_buffer = &part->vertex_buffer;
+				palette->nodes.count = source.local_node_count;
+				csmemcpy(palette->nodes.nodes, source.local_node_indices, sizeof(palette->nodes.nodes));
+#ifdef HALO_XBOX
+				/* (the map's vertices name the model's nodes: part_data) */
+				if (source.pad3[0] == PART_NODES_MADE_HERE)
+				{
+					nodes = &palette->nodes;
+					nodes_made_local = TRUE;
+				}
+#endif
+			}
+#ifdef HALO_XBOX
+			else if (on_demand && local_nodes)
+			{
+				struct part_nodes *own = &globals->part_nodes[globals->part_nodes_count++];
+
+				own->count = source.local_node_count;
+				csmemcpy(own->nodes, source.local_node_indices, sizeof(own->nodes));
+				nodes = own;
+			}
+			if (on_demand)
+			{
+				custom_edition_model_part_defer(part, &source, nodes, nodes_made_local);
+				continue;
+			}
+#else
+			(void)nodes;
+			(void)nodes_made_local;
+#endif
 			if (!custom_edition_model_part_convert(
 				part,
 				&source,
@@ -1103,14 +1595,6 @@ static boolean custom_edition_model_convert(
 				*strips))
 			{
 				return FALSE;
-			}
-			if (part_palettes)
-			{
-				struct part_palette *palette = &globals->palettes[globals->palette_count++];
-
-				palette->vertex_buffer = &part->vertex_buffer;
-				palette->node_count = source.local_node_count;
-				csmemcpy(palette->nodes, source.local_node_indices, sizeof(palette->nodes));
 			}
 			*vertices += source.vertex_count;
 			*strips += source.strip_triangle_count + 2;
@@ -1272,19 +1756,22 @@ boolean custom_edition_models_convert(
 	byte *model_data)
 {
 	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
-	struct model_geometry_totals totals = { 0, 0, 0, 0 };
+	struct model_geometry_totals totals = { 0, 0, 0, 0, 0, 0 };
 	struct model_vertex_uncompressed *scratch;
-	struct model_vertex_compressed *vertices;
+	struct model_vertex_compressed *vertices = NULL;
 	struct model *model;
-	word *strips;
+	word *strips = NULL;
 	int32_t tag_index = NONE;
 	boolean success = TRUE;
+	boolean on_demand = FALSE;
+	boolean geometry_had;
 
 	assert(!globals->model_parts && !globals->model_geometry);
 #ifdef HALO_XBOX
 	if (!geometry_room_begin(tag_cache, loaded_bytes, report))
 		return FALSE;
-	custom_edition_models_reduce(tag_cache, loaded_bytes);
+	/* (with room for geometry_allocate's rounding) */
+	on_demand = custom_edition_models_reduce(tag_cache, loaded_bytes) + 32 > geometry_room_models_bytes();
 #endif
 	/* (every model's local nodes are made before any model is verified:
 	making them writes node indices into the model data, and parts of
@@ -1316,18 +1803,31 @@ boolean custom_edition_models_convert(
 
 	globals->model_parts = malloc((totals.part_count + 1) * sizeof(*globals->model_parts));
 	globals->palettes = malloc((totals.many_node_part_count + 1) * sizeof(*globals->palettes));
-	globals->model_geometry = geometry_allocate(
-		totals.vertex_count * rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_model_compressed) +
-		totals.strip_index_count * sizeof(*strips) + 1,
-		TRUE,
-		totals.part_count * 2,
-		&globals->model_geometry_contiguous);
+#ifdef HALO_XBOX
+	if (on_demand)
+	{
+		globals->part_nodes = malloc((totals.local_node_part_count + 1) * sizeof(*globals->part_nodes));
+		geometry_had = globals->part_nodes && geometry_cache_new(report);
+	}
+	else
+#endif
+	{
+		globals->model_geometry = geometry_allocate(
+			totals.vertex_count * rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_model_compressed) +
+			totals.strip_index_count * sizeof(*strips) + 1,
+			TRUE,
+			totals.part_count * 2,
+			&globals->model_geometry_contiguous);
+		geometry_had = globals->model_geometry != NULL;
+		vertices = (struct model_vertex_compressed *)globals->model_geometry;
+		strips = (word *)(vertices + totals.vertex_count);
+	}
 #ifdef HALO_XBOX
 	scratch = geometry_room.part_scratch;
 #else
 	scratch = malloc(totals.largest_part_vertex_count * sizeof(*scratch) + 1);
 #endif
-	if (!globals->model_parts || !globals->model_geometry || !globals->palettes || !scratch)
+	if (!globals->model_parts || !geometry_had || !globals->palettes || !scratch)
 	{
 		error(_error_silent, "custom edition: out of memory for the geometry of %ld model parts", totals.part_count);
 		/* (the game's free, debug_free, does not take NULL) */
@@ -1337,14 +1837,12 @@ boolean custom_edition_models_convert(
 #endif
 		return FALSE;
 	}
-	vertices = (struct model_vertex_compressed *)globals->model_geometry;
-	strips = (word *)(vertices + totals.vertex_count);
 
 	tag_index = NONE;
 	while (success &&
 		(model = custom_edition_cache_tag_next(tag_cache, loaded_bytes, GBXMODEL_GROUP_TAG, sizeof(*model), &tag_index)) != NULL)
 	{
-		success = custom_edition_model_convert(model, report, model_data, scratch, &vertices, &strips);
+		success = custom_edition_model_convert(model, report, model_data, scratch, &vertices, &strips, on_demand);
 		if (!success)
 		{
 			error(
@@ -1355,6 +1853,8 @@ boolean custom_edition_models_convert(
 	}
 #ifdef HALO_XBOX
 	geometry_room_models_done(report);
+	if (on_demand)
+		geometry_cache_bsp_headers_room();
 #else
 	free(scratch);
 #endif
@@ -1367,6 +1867,16 @@ boolean custom_edition_models_convert(
 			totals.part_count,
 			totals.vertex_count,
 			totals.many_node_part_count);
+#ifdef HALO_XBOX
+		if (on_demand)
+		{
+			error(
+				_error_silent,
+				"custom edition: the models' geometry is read from the map when drawn, into a cache of %lu KB %s",
+				globals->geometry_cache_bytes >> 10,
+				globals->geometry_cache_lent ? "lent by the texture cache" : "beside the tags");
+		}
+#endif
 	}
 
 	return success;
@@ -1383,11 +1893,68 @@ short custom_edition_part_palette(
 	{
 		if (globals->palettes[index].vertex_buffer == vertex_buffer)
 		{
-			*nodes = globals->palettes[index].nodes;
-			return globals->palettes[index].node_count;
+			*nodes = globals->palettes[index].nodes.nodes;
+			return globals->palettes[index].nodes.count;
 		}
 	}
 	return 0;
+}
+
+unsigned char custom_edition_model_geometry_ready(
+	struct model_geometry *geometry)
+{
+#ifdef HALO_XBOX
+	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
+
+	if (!globals->geometry_cache || geometry->cache_signature != GEOMETRY_CACHE_SIGNATURE)
+	{
+		return TRUE;
+	}
+	if (geometry->cache_block_index != NONE)
+	{
+		lruv_block_touch(globals->geometry_cache, geometry->cache_block_index);
+		return TRUE;
+	}
+
+	return geometry_cache_load(geometry);
+#else
+	(void)geometry;
+
+	return TRUE;
+#endif
+}
+
+void custom_edition_geometry_idle(
+	void)
+{
+#ifdef HALO_XBOX
+	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
+
+	if (!globals->geometry_cache)
+	{
+		return;
+	}
+	lruv_idle(globals->geometry_cache);
+	if (++globals->geometry_cache_ticks % GEOMETRY_CACHE_LOG_FRAMES == 0 &&
+		(globals->geometries_read || globals->geometries_not_drawn))
+	{
+		error(
+			_error_silent,
+			"custom edition: geometry cache: %ld geometries in %lu of its %lu KB; in the last %d frames %ld read (%lu KB), %ld not drawn for want of room",
+			globals->geometries_resident,
+			globals->geometry_bytes_resident >> 10,
+			globals->geometry_cache_bytes >> 10,
+			GEOMETRY_CACHE_LOG_FRAMES,
+			globals->geometries_read,
+			globals->geometry_bytes_read >> 10,
+			globals->geometries_not_drawn);
+		globals->geometries_read = 0;
+		globals->geometry_bytes_read = 0;
+		globals->geometries_not_drawn = 0;
+	}
+#endif
+
+	return;
 }
 
 void custom_edition_models_dispose(
@@ -1396,6 +1963,10 @@ void custom_edition_models_dispose(
 	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
 	long part_index;
 
+#ifdef HALO_XBOX
+	/* (the geometry read when drawn goes first, once the GPU has drawn it) */
+	geometry_cache_dispose();
+#endif
 	for (part_index = 0; part_index < globals->model_part_count; part_index++)
 	{
 		rasterizer_triangle_buffer_delete(&globals->model_parts[part_index]->triangle_buffer);

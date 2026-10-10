@@ -326,6 +326,13 @@ static void render_model_parts(
 					struct model_geometry *geometry = TAG_BLOCK_GET_ELEMENT(&model->geometries, geometry_index, struct model_geometry);
 					short part_index;
 
+					/* port: a Halo Custom Edition map's geometry the original
+					Xbox reads from the map when it is drawn: none this frame
+					when it cannot be had */
+					if (!custom_edition_model_geometry_ready(geometry))
+					{
+						continue;
+					}
 					for (part_index = 0; part_index<geometry->parts.count; part_index++)
 					{
 						struct model_geometry_part *part = TAG_BLOCK_GET_ELEMENT(&geometry->parts, part_index, struct model_geometry_part);

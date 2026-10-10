@@ -42,6 +42,10 @@ void texture_cache_flush(
 	void);
 void *texture_cache_steal_memory(
 	long size);
+/* port: memory lent to a Halo Custom Edition map's model geometry
+(port/linux/game/custom_edition_geometry.c) */
+void *texture_cache_lend_memory(
+	long size);
 void texture_cache_debug_render(
 	void);
 

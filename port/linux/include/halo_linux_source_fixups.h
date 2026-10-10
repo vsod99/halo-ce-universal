@@ -43,6 +43,13 @@ placement is placed in the running game
 struct scenario_object_datum;
 unsigned char custom_edition_vehicles_by_placement(void);
 unsigned char custom_edition_vehicle_placement_allowed(struct scenario_object_datum const *placement);
+/* whether a model geometry can be drawn now: a Halo Custom Edition map's
+that the original Xbox reads from the map when drawn is read first, and is
+not drawn when there is no room; and the cache of those, a frame on
+(port/linux/game/custom_edition_geometry.c) */
+struct model_geometry;
+unsigned char custom_edition_model_geometry_ready(struct model_geometry *geometry);
+void custom_edition_geometry_idle(void);
 
 /* the width of the screen the game draws, 480 lines tall: the device's or
 the display's shape, or 640 (port/linux/src/d3d8_gl.c) */

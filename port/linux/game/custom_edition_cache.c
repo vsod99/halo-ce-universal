@@ -31,7 +31,6 @@ where its offset falls in their combined offset space.
 #include "custom_edition_cache.h"
 #include "tag_schema.h"
 
-#include <limits.h>
 #include <stdlib.h>
 
 /* ---------- constants */
@@ -489,13 +488,26 @@ static boolean custom_edition_cache_tags_convert(
 
 #ifdef HALO_XBOX
 /* Whether the map `path` (identified as `identity`) fits the original Xbox's
-room for geometry, which lies in its tag cache between the tags and the
-lowest structure BSP (custom_edition_geometry.c), measured from the file
-with room to spare: a map is refused before a game is started for it, as a
-load that fails cannot be returned from to the menus. */
+tag cache, measured from the file with room to spare: a map is refused
+before a game is started for it, as a load that fails cannot be returned
+from to the menus. Its tags, and the tags its resource maps hold after them,
+must end below its lowest structure BSP, with room at the tag cache's top
+to read its model parts while they are converted. Its models' geometry fits
+either way: it is read from the map when drawn when it does not fit between
+the tags and the structure BSPs (custom_edition_geometry.c). The resource
+maps' tags are measured from their indexes when an allowance for them would
+not leave room. */
 #define XBOX_RESOURCE_TAGS_ALLOWANCE 0x100000UL
-#define XBOX_STRUCTURE_BSP_HEADERS_ALLOWANCE 0x40000UL
 #define XBOX_MODEL_PART_READ_ALLOWANCE 0x200000UL
+
+/* Maps that fit but do not yet run well enough to offer: Precipice's view
+needs more of its large uncompressed textures than the texture cache holds,
+which reads them again from bitmaps.map frame after frame (3 to 4 fps in
+xemu), and most of them are too large for the heap to swizzle. */
+static char const *const xbox_unsupported_maps[] =
+{
+	"precipice",
+};
 
 static boolean custom_edition_cache_fits(
 	struct custom_edition_file const *file,
@@ -503,49 +515,70 @@ static boolean custom_edition_cache_fits(
 	char const *path)
 {
 	struct custom_edition_measure measure;
-	unsigned long start;
+	unsigned long loaded_bytes;
 	unsigned long limit;
-	unsigned long needed;
+	long index;
 
+	for (index = 0; index < NUMBEROF(xbox_unsupported_maps); index++)
+	{
+		if (!strcmp(identity->name, xbox_unsupported_maps[index]))
+		{
+			error(_error_silent, "custom edition: '%s' does not run well enough on the Xbox yet", path);
+			return FALSE;
+		}
+	}
 	if (custom_edition_cache_measure(&file->source, identity, &measure) != _cache_file_status_ok)
 	{
 		/* (the load says what is wrong) */
 		return TRUE;
 	}
-	start = (measure.tag_data_bytes + XBOX_RESOURCE_TAGS_ALLOWANCE + 0xFFF) & ~0xFFFUL;
+	loaded_bytes = measure.tag_data_bytes + XBOX_RESOURCE_TAGS_ALLOWANCE;
 	limit = measure.lowest_structure_bsp_address ?
 		measure.lowest_structure_bsp_address - CUSTOM_EDITION_TAG_CACHE_ADDRESS :
 		CUSTOM_EDITION_TAG_CACHE_BYTES;
-	/* (the compressed vertices are 32 bytes where the map's are 68; the
-	strips are copied; two buffer headers a part) */
-	needed = measure.model_index_data_offset / 68 * 32 +
-		(measure.model_data_bytes - measure.model_index_data_offset) +
-		(unsigned long)measure.model_part_count * 24 + XBOX_STRUCTURE_BSP_HEADERS_ALLOWANCE;
-	if (limit > CUSTOM_EDITION_TAG_CACHE_BYTES || start > limit)
+	if (limit <= CUSTOM_EDITION_TAG_CACHE_BYTES && loaded_bytes > limit)
 	{
-		needed = ULONG_MAX;
-	}
-	else if (needed > limit - start || start + needed > CUSTOM_EDITION_TAG_CACHE_BYTES - XBOX_MODEL_PART_READ_ALLOWANCE)
-	{
-		/* (the estimate above is a little high: the models walked, at full
-		detail, and at medium detail at most when the setting allows it) */
-		uint32_t all_bytes;
-		uint32_t reduced_bytes;
+		struct custom_edition_file resource_files[NUMBER_OF_RESOURCE_MAP_TYPES];
+		struct resource_map resource_map_storage[NUMBER_OF_RESOURCE_MAP_TYPES];
+		struct resource_map *resource_maps[NUMBER_OF_RESOURCE_MAP_TYPES];
+		uint32_t measured_bytes;
+		enum cache_file_status status;
+		short type;
 
-		if (custom_edition_cache_measure_models(&file->source, identity, &all_bytes, &reduced_bytes) != _cache_file_status_ok)
-			return TRUE;
-		needed = all_bytes + XBOX_STRUCTURE_BSP_HEADERS_ALLOWANCE;
-		if ((needed > limit - start || start + needed > CUSTOM_EDITION_TAG_CACHE_BYTES - XBOX_MODEL_PART_READ_ALLOWANCE) &&
-			config_boolean("game.custom_edition_reduce_detail"))
+		memset(resource_files, 0, sizeof(resource_files));
+		memset(resource_maps, 0, sizeof(resource_maps));
+		for (type = _resource_map_bitmaps; type < NUMBER_OF_RESOURCE_MAP_TYPES; type++)
 		{
-			needed = reduced_bytes + XBOX_STRUCTURE_BSP_HEADERS_ALLOWANCE;
+			char resource_path[MAP_PATH_SIZE];
+
+			if (custom_edition_resource_map_path((enum resource_map_type)type, resource_path) &&
+				custom_edition_file_open(&resource_files[type], resource_path) &&
+				resource_map_open(
+					&resource_files[type].source,
+					(enum resource_map_type)type,
+					&resource_map_storage[type]) == _cache_file_status_ok)
+			{
+				resource_maps[type] = &resource_map_storage[type];
+			}
 		}
+		status = custom_edition_cache_measure_resource_tags(&file->source, identity, resource_maps, &measured_bytes);
+		for (type = _resource_map_bitmaps; type < NUMBER_OF_RESOURCE_MAP_TYPES; type++)
+		{
+			if (resource_maps[type])
+				resource_map_close(resource_maps[type]);
+			custom_edition_file_close(&resource_files[type]);
+		}
+		if (status != _cache_file_status_ok)
+		{
+			return TRUE;
+		}
+		loaded_bytes = measured_bytes;
 	}
-	if (needed == ULONG_MAX || needed > limit - start ||
-		start + needed > CUSTOM_EDITION_TAG_CACHE_BYTES - XBOX_MODEL_PART_READ_ALLOWANCE)
+	if (limit > CUSTOM_EDITION_TAG_CACHE_BYTES || loaded_bytes > limit ||
+		loaded_bytes > CUSTOM_EDITION_TAG_CACHE_BYTES - XBOX_MODEL_PART_READ_ALLOWANCE)
 	{
-		error(_error_silent, "custom edition: '%s' is too large for the Xbox: its models need 0x%lX bytes, with 0x%lX between its tags and its structure BSPs",
-			path, needed, start <= limit ? limit - start : 0UL);
+		error(_error_silent, "custom edition: '%s' is too large for the Xbox: its tags take 0x%lX bytes, its structure BSPs load from 0x%lX",
+			path, loaded_bytes, limit);
 		return FALSE;
 	}
 

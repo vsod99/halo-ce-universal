@@ -380,17 +380,15 @@ enum cache_file_status custom_edition_cache_measure(
 	struct cache_file_identity const *identity,
 	struct custom_edition_measure *measure);
 
-/* The bytes the models' geometry takes once compressed (32 bytes a vertex,
-the strips, and two 12-byte buffer headers a part): `all_bytes` for every
-geometry, `reduced_bytes` for the ones a model's permutations name once
-their high and super high levels of detail are made their medium one
-(custom_edition_geometry.c, custom_edition_models_reduce). Read a model at a
-time from the file, without loading it. */
-enum cache_file_status custom_edition_cache_measure_models(
+/* The bytes of tag data and of tags read from `resource_maps` a load of the
+cache `identity` describes leaves in use (custom_edition_cache_load places
+the tags the resource maps hold after the tag data, each at a multiple of
+4), measured from the file and the maps' indexes without loading it. */
+enum cache_file_status custom_edition_cache_measure_resource_tags(
 	struct cache_file_source const *source,
 	struct cache_file_identity const *identity,
-	uint32_t *all_bytes,
-	uint32_t *reduced_bytes);
+	struct resource_map *const resource_maps[NUMBER_OF_RESOURCE_MAP_TYPES],
+	uint32_t *loaded_bytes);
 
 /* Loads a Custom Edition cache into `tag_cache`, which stands for the
 `tag_cache_bytes` bytes at CUSTOM_EDITION_TAG_CACHE_ADDRESS and must be at
