@@ -132,6 +132,7 @@ symbols in this file:
 #include "sound_cache.h"
 #include "texture_cache.h"
 #include "interface/ui_widget.h"
+#include "interface/virtual_keyboard.h"
 #include "scenario/scenario_definitions.h"
 #include "sound/sound_manager.h"
 #include "tag_schema.h"
@@ -606,6 +607,10 @@ void scenario_tags_unload(
 		loose_sounds_tags_unloaded();
 	}
 	texture_cache_close();
+	/* port: the on-screen keyboard lets go of its definition, ui.map's (it
+	was never let go, and a game map's menus opened it on tags that are not
+	there: main_screen_shell_load sets it up again with ui.map) */
+	virtual_keyboard_dispose();
 	/* port: the menus' tags go, and the map's own table comes back
 	(port/linux/game/menu_tags.c): after the texture cache, which writes to
 	the bitmaps it has loaded as it closes, theirs among them */
