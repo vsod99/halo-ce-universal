@@ -54,6 +54,13 @@ this build's (game_state.c) */
 boolean game_state_image_accept(
 	void *image,
 	long size);
+/* port: where such an image is read, and done with (game_state.c); NULL if
+there is no room for one */
+void *game_state_image_new(
+	long size);
+void game_state_image_delete(
+	void *image,
+	boolean taken);
 void game_state_save_core(
 	const char *name);
 boolean game_state_reverted(
