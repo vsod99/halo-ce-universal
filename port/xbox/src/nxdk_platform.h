@@ -87,5 +87,8 @@ void xbox_gpu_present(void);
 /* waits for a vertical blank; their count */
 unsigned long xbox_gpu_wait_vertical_blank(void);
 unsigned long xbox_gpu_vertical_blank_count(void);
+/* the share of the time since the last call the processor spent waiting on
+the GPU (for the push buffer's room, a fence, a free buffer to flip to) */
+unsigned long xbox_gpu_waited_percent(void);
 
 #endif /* __HALO_XBOX_NXDK_PLATFORM_H */

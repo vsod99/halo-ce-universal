@@ -99,6 +99,33 @@ unsigned long xbox_gpu_back_buffer(void)
 	return (unsigned long)pb_back_buffer() & 0x03ffffff;
 }
 
+/* the time the processor spent waiting on the GPU (time stamp counter
+cycles), which the frame rate's log line gives as a share */
+static unsigned long long waited;
+
+static unsigned long long wait_start(void)
+{
+	return __builtin_ia32_rdtsc();
+}
+
+static void wait_end(unsigned long long start)
+{
+	waited += __builtin_ia32_rdtsc() - start;
+}
+
+unsigned long xbox_gpu_waited_percent(void)
+{
+	static unsigned long long last_time, last_waited;
+	unsigned long long now = __builtin_ia32_rdtsc();
+	unsigned long percent = 0;
+
+	if (last_time && now != last_time)
+		percent = (unsigned long)((waited - last_waited) * 100 / (now - last_time));
+	last_time = now;
+	last_waited = waited;
+	return percent;
+}
+
 /* where the GPU reads the push buffer next (physical); pbkit's channel 0 */
 static uint32_t gpu_get(void)
 {
@@ -130,13 +157,16 @@ static void gpu_wait_room(const uint32_t *p, unsigned long dwords)
 	uint32_t start = (uint32_t)p & 0x03ffffff;
 	uint32_t end = start + (dwords + PUSH_BUFFER_MARGIN) * 4;
 	uint32_t get;
+	unsigned long long started;
 
 	/* the GPU's read position only moves on: the room it left at the last
 	look is still free (a register read is costly, in xemu above all) */
 	if (end <= room_limit)
 		return;
+	started = wait_start();
 	while ((get = gpu_get()) > start && get < end)
 		;
+	wait_end(started);
 	/* behind p, it reads this lap: free to the buffer's end */
 	room_limit = get > start ? get : 0xffffffff;
 }
@@ -156,10 +186,13 @@ unsigned long *xbox_gpu_begin(unsigned long dwords)
 		uint32_t head = (uint32_t)push_buffer_head & 0x03ffffff;
 		uint32_t room_end = head + (dwords + PUSH_BUFFER_MARGIN) * 4;
 		uint32_t get;
+		unsigned long long started;
 
 		xbox_gpu_kick();
+		started = wait_start();
 		while ((get = gpu_get()) >= head && get < room_end)
 			;
+		wait_end(started);
 		*p = head | 1;
 		pb_end(push_buffer_head);
 		p = write_end = kicked_end = push_buffer_head;
@@ -184,9 +217,13 @@ int xbox_gpu_busy(void)
 
 void xbox_gpu_wait_idle(void)
 {
+	unsigned long long started;
+
 	xbox_gpu_kick();
+	started = wait_start();
 	while (pb_busy())
 		;
+	wait_end(started);
 }
 
 unsigned long xbox_gpu_fence(void)
@@ -196,19 +233,28 @@ unsigned long xbox_gpu_fence(void)
 
 void xbox_gpu_wait_fence(unsigned long fence)
 {
-	if ((long)(xbox_gpu_fence() - fence) < 0)
-		xbox_gpu_kick();
+	unsigned long long started;
+
+	if ((long)(xbox_gpu_fence() - fence) >= 0)
+		return;
+	xbox_gpu_kick();
+	started = wait_start();
 	while ((long)(xbox_gpu_fence() - fence) < 0)
 		NtYieldExecution();
+	wait_end(started);
 }
 
 void xbox_gpu_present(void)
 {
 	/* the back buffer is shown at the next vertical blank; pbkit then
 	draws into the next of its three, its methods after the device's */
+	unsigned long long started;
+
 	xbox_gpu_kick();
+	started = wait_start();
 	while (pb_finished())
 		NtYieldExecution();
+	wait_end(started);
 	write_end = kicked_end = pb_begin();
 	room_limit = 0;
 }
