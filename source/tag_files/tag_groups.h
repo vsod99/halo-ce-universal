@@ -125,6 +125,27 @@ void *tag_empty_data(void);
 void *tag_data_get_pointer(struct tag_data const *data, long offset, long size);
 void *tag_block_get_element_with_size(struct tag_block const *block, long index, long element_size);
 
+#ifdef HALO_XBOX
+/* port: tag_block_get_element_with_size's first check, inline, for the
+Xbox's busiest callers (the collision tests, which ask for an element per
+surface and edge) to take in place of TAG_BLOCK_GET_ELEMENT; inline
+everywhere, it would cost the Xbox 64 KB */
+static __inline__ void *tag_block_get_element_inline(
+	struct tag_block const *block,
+	long index,
+	long element_size)
+{
+	if (block && (unsigned long)index<(unsigned long)block->count && block->address &&
+		(!block->definition || block->definition->element_size==element_size))
+	{
+		return (byte *)block->address + index*element_size;
+	}
+
+	return tag_block_get_element_with_size(block, index, element_size);
+}
+#define TAG_BLOCK_GET_ELEMENT_INLINE(block_address, index, type) ((type *)tag_block_get_element_inline((block_address), (index), sizeof(type)))
+#endif
+
 /* ---------- prototypes/CACHE_FILES.C */
 
 long tag_loaded(long group_tag, const char *name);

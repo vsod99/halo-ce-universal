@@ -86,6 +86,12 @@ symbols in this file:
 #include "scenario/scenario.h"
 #include "tag_files/tag_groups.h"
 
+#ifdef HALO_XBOX
+/* port: the Xbox finds this file's tag block elements inline */
+#undef TAG_BLOCK_GET_ELEMENT
+#define TAG_BLOCK_GET_ELEMENT TAG_BLOCK_GET_ELEMENT_INLINE
+#endif
+
 /* ---------- constants */
 
 enum
