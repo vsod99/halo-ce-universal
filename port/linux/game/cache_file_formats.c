@@ -180,6 +180,21 @@ at theirs from the vertex data. */
 #define GBXMODEL_PART_VERTEX_OFFSET_OFFSET 0x64
 #define GBXMODEL_PART_LOCAL_NODE_COUNT_OFFSET 0x6B
 #define GBXMODEL_MAXIMUM_LOCAL_NODES 22
+#define GBXMODEL_REGIONS_OFFSET 0xC4
+#define GBXMODEL_GEOMETRIES_OFFSET 0xD0
+#define GBXMODEL_REGION_BYTES 0x4C
+#define GBXMODEL_REGION_PERMUTATIONS_OFFSET 0x40
+#define GBXMODEL_PERMUTATION_BYTES 0x58
+#define GBXMODEL_PERMUTATION_GEOMETRIES_OFFSET 0x40
+#define GBXMODEL_GEOMETRY_PARTS_OFFSET 0x24
+/* levels of detail: super low, low, medium, high, super high */
+#define GBXMODEL_LEVELS_OF_DETAIL 5
+#define GBXMODEL_MEDIUM_LEVEL_OF_DETAIL 2
+/* (no more than the game's model geometry block holds) */
+#define GBXMODEL_MAXIMUM_GEOMETRIES 256
+/* the compressed geometry's bytes: a vertex, a strip index, a part's headers */
+#define COMPRESSED_MODEL_VERTEX_BYTES 32
+#define MODEL_PART_BUFFER_HEADERS_BYTES 24
 #define GBXMODEL_VERTEX_BYTES 0x44
 #define STRIP_INDEX_BYTES 2
 
@@ -2201,6 +2216,184 @@ enum cache_file_status custom_edition_cache_measure(
 		if (!measure->lowest_structure_bsp_address || bsp_address < measure->lowest_structure_bsp_address)
 			measure->lowest_structure_bsp_address = bsp_address;
 	}
+
+	return _cache_file_status_ok;
+}
+
+
+/* reads `size` bytes at the tag data address `address` of the cache
+`identity` describes; FALSE when they are not all in its tag data */
+static int measure_read(
+	struct cache_file_source const *source,
+	struct cache_file_identity const *identity,
+	uint32_t address,
+	uint32_t size,
+	void *buffer)
+{
+	return address >= CUSTOM_EDITION_TAG_CACHE_ADDRESS &&
+		range_fits(address - CUSTOM_EDITION_TAG_CACHE_ADDRESS, size, identity->tag_data_size) &&
+		source->read(source->context, identity->tag_data_offset + address - CUSTOM_EDITION_TAG_CACHE_ADDRESS, size, buffer);
+}
+
+/* the compressed bytes of the geometry at `address` (its parts), or
+UINT32_MAX when it cannot be read */
+static uint32_t measure_geometry(
+	struct cache_file_source const *source,
+	struct cache_file_identity const *identity,
+	uint32_t address)
+{
+	uint8_t geometry[GBXMODEL_GEOMETRY_BYTES];
+	uint8_t parts[16 * GBXMODEL_PART_BYTES];
+	uint32_t bytes = 0;
+	int32_t count;
+	uint32_t parts_address;
+	int32_t first;
+
+	if (!measure_read(source, identity, address, sizeof(geometry), geometry))
+		return UINT32_MAX;
+	count = read_s32(geometry + GBXMODEL_GEOMETRY_PARTS_OFFSET + TAG_BLOCK_COUNT_OFFSET);
+	parts_address = read_u32(geometry + GBXMODEL_GEOMETRY_PARTS_OFFSET + TAG_BLOCK_ADDRESS_OFFSET);
+	if (count < 0 || count > 0xFFFF)
+		return UINT32_MAX;
+	for (first = 0; first < count; first += 16)
+	{
+		int32_t number = count - first < 16 ? count - first : 16;
+		int32_t index;
+
+		if (!measure_read(source, identity, parts_address + (uint32_t)first * GBXMODEL_PART_BYTES,
+			(uint32_t)number * GBXMODEL_PART_BYTES, parts))
+		{
+			return UINT32_MAX;
+		}
+		for (index = 0; index < number; index++)
+		{
+			uint8_t const *part = parts + (uint32_t)index * GBXMODEL_PART_BYTES;
+			uint32_t vertex_count = read_u32(part + GBXMODEL_PART_VERTEX_COUNT_OFFSET);
+			uint32_t strip_count = read_u32(part + GBXMODEL_PART_STRIP_TRIANGLE_COUNT_OFFSET);
+
+			/* (the loader refuses more) */
+			if (vertex_count > MAXIMUM_VERTICES_PER_BUFFER || strip_count > 0x1000000)
+				return UINT32_MAX;
+			bytes += vertex_count * COMPRESSED_MODEL_VERTEX_BYTES + (strip_count + 2) * STRIP_INDEX_BYTES +
+				MODEL_PART_BUFFER_HEADERS_BYTES;
+		}
+	}
+
+	return bytes;
+}
+
+enum cache_file_status custom_edition_cache_measure_models(
+	struct cache_file_source const *source,
+	struct cache_file_identity const *identity,
+	uint32_t *all_bytes,
+	uint32_t *reduced_bytes)
+{
+	uint8_t tag_index[TAG_INDEX_BYTES];
+	uint8_t instances[64 * TAG_INSTANCE_BYTES];
+	uint32_t instances_address;
+	int32_t tag_count;
+	int32_t first;
+	uint64_t all = 0;
+	uint64_t reduced = 0;
+
+	*all_bytes = UINT32_MAX;
+	*reduced_bytes = UINT32_MAX;
+	if (identity->tag_data_size < TAG_INDEX_BYTES ||
+		!source->read(source->context, identity->tag_data_offset, TAG_INDEX_BYTES, tag_index))
+	{
+		return _cache_file_status_read_failed;
+	}
+	instances_address = read_u32(tag_index + TAG_INDEX_INSTANCES_OFFSET);
+	tag_count = read_s32(tag_index + TAG_INDEX_COUNT_OFFSET);
+	if (tag_count <= 0 || (uint32_t)tag_count > ABSOLUTE_INDEX_MASK + 1)
+		return _cache_file_status_bad_tag_instances_range;
+	for (first = 0; first < tag_count; first += 64)
+	{
+		int32_t number = tag_count - first < 64 ? tag_count - first : 64;
+		int32_t index;
+
+		if (!measure_read(source, identity, instances_address + (uint32_t)first * TAG_INSTANCE_BYTES,
+			(uint32_t)number * TAG_INSTANCE_BYTES, instances))
+		{
+			return _cache_file_status_bad_tag_instances_range;
+		}
+		for (index = 0; index < number; index++)
+		{
+			uint8_t const *instance = instances + (uint32_t)index * TAG_INSTANCE_BYTES;
+			uint8_t model[GBXMODEL_BYTES];
+			uint8_t used[GBXMODEL_MAXIMUM_GEOMETRIES];
+			int32_t geometry_count;
+			uint32_t geometries_address;
+			int32_t region_count;
+			uint32_t regions_address;
+			int32_t region_index;
+			int32_t geometry_index;
+
+			if (read_u32(instance + TAG_INSTANCE_GROUP_OFFSET) != GBXMODEL_GROUP_TAG ||
+				read_u32(instance + TAG_INSTANCE_IN_RESOURCE_MAP_OFFSET))
+			{
+				continue;
+			}
+			if (!measure_read(source, identity, read_u32(instance + TAG_INSTANCE_ADDRESS_OFFSET), GBXMODEL_BYTES, model))
+				return _cache_file_status_bad_tag_address;
+			geometry_count = read_s32(model + GBXMODEL_GEOMETRIES_OFFSET + TAG_BLOCK_COUNT_OFFSET);
+			geometries_address = read_u32(model + GBXMODEL_GEOMETRIES_OFFSET + TAG_BLOCK_ADDRESS_OFFSET);
+			region_count = read_s32(model + GBXMODEL_REGIONS_OFFSET + TAG_BLOCK_COUNT_OFFSET);
+			regions_address = read_u32(model + GBXMODEL_REGIONS_OFFSET + TAG_BLOCK_ADDRESS_OFFSET);
+			if (geometry_count < 0 || geometry_count > GBXMODEL_MAXIMUM_GEOMETRIES || region_count < 0 || region_count > 0xFFFF)
+				return _cache_file_status_bad_tag_address;
+			memset(used, 0, sizeof(used));
+			for (region_index = 0; region_index < region_count; region_index++)
+			{
+				uint8_t region[GBXMODEL_REGION_BYTES];
+				uint8_t permutation[GBXMODEL_PERMUTATION_BYTES];
+				int32_t permutation_count;
+				uint32_t permutations_address;
+				int32_t permutation_index;
+
+				if (!measure_read(source, identity, regions_address + (uint32_t)region_index * GBXMODEL_REGION_BYTES,
+					GBXMODEL_REGION_BYTES, region))
+				{
+					return _cache_file_status_bad_tag_address;
+				}
+				permutation_count = read_s32(region + GBXMODEL_REGION_PERMUTATIONS_OFFSET + TAG_BLOCK_COUNT_OFFSET);
+				permutations_address = read_u32(region + GBXMODEL_REGION_PERMUTATIONS_OFFSET + TAG_BLOCK_ADDRESS_OFFSET);
+				if (permutation_count < 0 || permutation_count > 0xFFFF)
+					return _cache_file_status_bad_tag_address;
+				for (permutation_index = 0; permutation_index < permutation_count; permutation_index++)
+				{
+					int32_t level;
+
+					if (!measure_read(source, identity,
+						permutations_address + (uint32_t)permutation_index * GBXMODEL_PERMUTATION_BYTES,
+						GBXMODEL_PERMUTATION_BYTES, permutation))
+					{
+						return _cache_file_status_bad_tag_address;
+					}
+					for (level = 0; level <= GBXMODEL_MEDIUM_LEVEL_OF_DETAIL; level++)
+					{
+						int16_t geometry = (int16_t)read_u16(permutation + GBXMODEL_PERMUTATION_GEOMETRIES_OFFSET + 2 * level);
+
+						if (geometry >= 0 && geometry < geometry_count)
+							used[geometry] = 1;
+					}
+				}
+			}
+			for (geometry_index = 0; geometry_index < geometry_count; geometry_index++)
+			{
+				uint32_t bytes = measure_geometry(source, identity,
+					geometries_address + (uint32_t)geometry_index * GBXMODEL_GEOMETRY_BYTES);
+
+				if (bytes == UINT32_MAX)
+					return _cache_file_status_bad_tag_address;
+				all += bytes;
+				if (used[geometry_index])
+					reduced += bytes;
+			}
+		}
+	}
+	*all_bytes = all > UINT32_MAX ? UINT32_MAX : (uint32_t)all;
+	*reduced_bytes = reduced > UINT32_MAX ? UINT32_MAX : (uint32_t)reduced;
 
 	return _cache_file_status_ok;
 }

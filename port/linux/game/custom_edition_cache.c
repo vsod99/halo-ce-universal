@@ -31,6 +31,7 @@ where its offset falls in their combined offset space.
 #include "custom_edition_cache.h"
 #include "tag_schema.h"
 
+#include <limits.h>
 #include <stdlib.h>
 
 /* ---------- constants */
@@ -520,7 +521,27 @@ static boolean custom_edition_cache_fits(
 	needed = measure.model_index_data_offset / 68 * 32 +
 		(measure.model_data_bytes - measure.model_index_data_offset) +
 		(unsigned long)measure.model_part_count * 24 + XBOX_STRUCTURE_BSP_HEADERS_ALLOWANCE;
-	if (limit > CUSTOM_EDITION_TAG_CACHE_BYTES || start > limit || needed > limit - start ||
+	if (limit > CUSTOM_EDITION_TAG_CACHE_BYTES || start > limit)
+	{
+		needed = ULONG_MAX;
+	}
+	else if (needed > limit - start || start + needed > CUSTOM_EDITION_TAG_CACHE_BYTES - XBOX_MODEL_PART_READ_ALLOWANCE)
+	{
+		/* (the estimate above is a little high: the models walked, at full
+		detail, and at medium detail at most when the setting allows it) */
+		uint32_t all_bytes;
+		uint32_t reduced_bytes;
+
+		if (custom_edition_cache_measure_models(&file->source, identity, &all_bytes, &reduced_bytes) != _cache_file_status_ok)
+			return TRUE;
+		needed = all_bytes + XBOX_STRUCTURE_BSP_HEADERS_ALLOWANCE;
+		if ((needed > limit - start || start + needed > CUSTOM_EDITION_TAG_CACHE_BYTES - XBOX_MODEL_PART_READ_ALLOWANCE) &&
+			config_boolean("game.custom_edition_reduce_detail"))
+		{
+			needed = reduced_bytes + XBOX_STRUCTURE_BSP_HEADERS_ALLOWANCE;
+		}
+	}
+	if (needed == ULONG_MAX || needed > limit - start ||
 		start + needed > CUSTOM_EDITION_TAG_CACHE_BYTES - XBOX_MODEL_PART_READ_ALLOWANCE)
 	{
 		error(_error_silent, "custom edition: '%s' is too large for the Xbox: its models need 0x%lX bytes, with 0x%lX between its tags and its structure BSPs",

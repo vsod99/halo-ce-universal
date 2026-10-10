@@ -284,18 +284,38 @@ make room (saved games of earlier Xbox builds no longer load). Sounds
 Custom Edition keeps as Ogg Vorbis are encoded again at load into 2 MB at
 most; the rest are silent.
 
-A map's model data is read to the top of the window, free until a
-structure BSP loads, and its geometry goes between the tags and the lowest
-structure BSP, at the Xbox tag cache's own address (which the GPU reads),
-drawn in place from headers of the port's own; a structure BSP's vertices
-follow the models'. A map whose geometry has no room there is refused and
-logged, and the game goes back to its menus.
+Each model part's vertices and strip are read from the map as it is
+converted, to the top of the window (free until a structure BSP loads), and
+the models' geometry goes between the tags and the lowest structure BSP, at
+the Xbox tag cache's own address (which the GPU reads), drawn in place from
+headers of the port's own. A structure BSP's vertices are compressed where
+they lie in the BSP: the window's last megabyte is had right after the tag
+cache's pages, so all 23 MB are one run the GPU reads. Only the BSP's buffer
+headers need room beside the models', kept for them, as a BSP that fails to
+load is fatal to the game.
 
-Tested (Oct 10, xemu, release): Death Island 27 fps, Infinity 27, Yoyorast
-Island 26, Portent 19 run. Hugeass and Extinction are refused (21-23 MB of
-model data), Precipice too (its 16 MB structure BSP leaves 176 KB). The
-renderer has no texture swizzle, so multipurpose maps and HUD meters are
-drawn in Halo PC's channel order (weapons look tinted).
+A map is measured from a few reads of its file before a game starts for it
+(`custom_edition_cache_measure`, and the models walked when that is close):
+one whose geometry does not fit is left out of the map lists, and refused
+with a message when a host names it. With `game.custom_edition_reduce_detail`
+(Xbox only, on by default), a map whose models do not fit at full detail is
+run with each permutation's high and super high levels of detail drawn from
+its medium geometry, when that fits; maps that fit keep their full detail.
+
+| Map | Models, compressed | Room | Runs (xemu, release) |
+| --- | --- | --- | --- |
+| Death Island, Infinity, Yoyorast Island | 3.4-3.6 MB | 11-13 MB | 25-27 fps |
+| Portent | 3.3 MB | 7.6 MB | 19 fps |
+| Chronopolis C3 | 7.6 MB | 9.1 MB | yes |
+| cmt Snow Grove | 10.5 MB | 10.9 MB | 27 fps |
+| Hugeass | 11.3 MB (5.2 at medium) | 7.2 MB | 25 fps, medium detail |
+| Extinction | 10.4 MB (6.9) | 4.8 MB | not listed |
+| Coldsnap, Precipice, TSCE | 4.5-11.6 MB | 0-0.6 MB (12-16 MB BSPs) | not listed |
+| bigass v3 | 26.7 MB (12.8) | 4.8 MB | not listed |
+
+The renderer has no texture swizzle, so multipurpose maps and HUD meters are
+drawn in Halo PC's channel order (weapons look tinted, Snow Grove's meters
+are gradients).
 
 ## Programs
 

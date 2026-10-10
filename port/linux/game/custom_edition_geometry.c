@@ -233,6 +233,10 @@ there. */
 /* (in a Custom Edition part's padding: its vertices name the model's nodes,
 which model_local_nodes_make gave it its own of) */
 #define PART_NODES_MADE_HERE 1
+/* a permutation's levels of detail: super low, low, medium, high, super high */
+#define MEDIUM_LEVEL_OF_DETAIL 2
+/* (the game's model geometry block holds no more) */
+#define MAXIMUM_GEOMETRIES_PER_MODEL_FOR_REDUCTION 256
 
 /* (port/xbox/src/nxdk_memory.c) */
 unsigned long xbox_custom_edition_tag_cache_gpu_bytes(void);
@@ -336,6 +340,118 @@ static boolean geometry_room_begin(
 		geometry_room_limit(report) - MIN(geometry_room_bsp_headers_size(report), geometry_room_limit(report))));
 
 	return TRUE;
+}
+
+/* (port_config.c) */
+int config_boolean(char const *name);
+
+/* the compressed bytes of the parts of `geometry` (as geometry_allocate
+takes them, with their buffers' headers) */
+static unsigned long geometry_bytes(
+	struct model_geometry const *geometry)
+{
+	unsigned long bytes = 0;
+	long part_index;
+
+	for (part_index = 0; part_index < geometry->parts.count; part_index++)
+	{
+		struct custom_edition_model_part const *part = TAG_BLOCK_GET_ELEMENT(
+			&geometry->parts,
+			part_index,
+			struct custom_edition_model_part);
+
+		bytes += part->vertex_count * rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_model_compressed) +
+			(part->strip_triangle_count + 2) * sizeof(word) + 2 * GEOMETRY_HEADER_SIZE;
+	}
+
+	return bytes;
+}
+
+/* When the models of `tag_cache` do not fit the room at their full detail
+and game.custom_edition_reduce_detail allows it, draws every permutation's
+high and super high levels of detail with its medium geometry, and gives the
+geometries no permutation names then no parts, so that they are not
+converted. (custom_edition_cache_measure_models measured the same before the
+map was let run.) */
+static void custom_edition_models_reduce(
+	byte *tag_cache,
+	unsigned long loaded_bytes)
+{
+	unsigned long room = (unsigned long)(geometry_room.end - geometry_room.start);
+	unsigned long all_bytes = 0;
+	unsigned long reduced_bytes = 0;
+	long reduced_geometry_count = 0;
+	struct model *model;
+	int32_t tag_index = NONE;
+
+	while ((model = custom_edition_cache_tag_next(tag_cache, loaded_bytes, GBXMODEL_GROUP_TAG, sizeof(*model), &tag_index)) != NULL)
+	{
+		long geometry_index;
+
+		for (geometry_index = 0; geometry_index < model->geometries.count; geometry_index++)
+		{
+			all_bytes += geometry_bytes(TAG_BLOCK_GET_ELEMENT(&model->geometries, geometry_index, struct model_geometry));
+		}
+	}
+	if (all_bytes <= room || !config_boolean("game.custom_edition_reduce_detail"))
+	{
+		return;
+	}
+	tag_index = NONE;
+	while ((model = custom_edition_cache_tag_next(tag_cache, loaded_bytes, GBXMODEL_GROUP_TAG, sizeof(*model), &tag_index)) != NULL)
+	{
+		byte used[MAXIMUM_GEOMETRIES_PER_MODEL_FOR_REDUCTION];
+		long region_index;
+		long geometry_index;
+
+		/* (the loader checked every index a permutation holds) */
+		if (model->geometries.count > MAXIMUM_GEOMETRIES_PER_MODEL_FOR_REDUCTION)
+			continue;
+		csmemset(used, 0, sizeof(used));
+		for (region_index = 0; region_index < model->regions.count; region_index++)
+		{
+			struct model_region *region = TAG_BLOCK_GET_ELEMENT(&model->regions, region_index, struct model_region);
+			long permutation_index;
+
+			for (permutation_index = 0; permutation_index < region->permutations.count; permutation_index++)
+			{
+				struct model_region_permutation *permutation = TAG_BLOCK_GET_ELEMENT(
+					&region->permutations,
+					permutation_index,
+					struct model_region_permutation);
+				short medium = permutation->geometry_indices[MEDIUM_LEVEL_OF_DETAIL];
+				long level;
+
+				if (medium >= 0 && medium < model->geometries.count)
+				{
+					for (level = MEDIUM_LEVEL_OF_DETAIL + 1; level < NUMBEROF(permutation->geometry_indices); level++)
+						permutation->geometry_indices[level] = medium;
+				}
+				for (level = 0; level < NUMBEROF(permutation->geometry_indices); level++)
+				{
+					short geometry = permutation->geometry_indices[level];
+
+					if (geometry >= 0 && geometry < model->geometries.count)
+						used[geometry] = TRUE;
+				}
+			}
+		}
+		for (geometry_index = 0; geometry_index < model->geometries.count; geometry_index++)
+		{
+			struct model_geometry *geometry = TAG_BLOCK_GET_ELEMENT(&model->geometries, geometry_index, struct model_geometry);
+
+			if (!used[geometry_index])
+			{
+				geometry->parts.count = 0;
+				reduced_geometry_count++;
+			}
+			reduced_bytes += geometry_bytes(geometry);
+		}
+	}
+	error(_error_silent, "custom edition: the models' 0x%lX bytes of geometry do not fit the Xbox's 0x%lX: drawn at medium detail at most, 0x%lX bytes (%ld geometries left out)",
+		all_bytes, room, reduced_bytes, reduced_geometry_count);
+
+	return;
 }
 
 /* the models converted: the room reaches to the lowest structure BSP */
@@ -1168,6 +1284,7 @@ boolean custom_edition_models_convert(
 #ifdef HALO_XBOX
 	if (!geometry_room_begin(tag_cache, loaded_bytes, report))
 		return FALSE;
+	custom_edition_models_reduce(tag_cache, loaded_bytes);
 #endif
 	/* (every model's local nodes are made before any model is verified:
 	making them writes node indices into the model data, and parts of
