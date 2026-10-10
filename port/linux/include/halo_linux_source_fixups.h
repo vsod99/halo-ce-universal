@@ -56,6 +56,9 @@ the display's shape, or 640 (port/linux/src/d3d8_gl.c) */
 long halo_screen_width(void);
 /* the screen's pixels to the Xbox's one (port/linux/src/d3d8_gl.c) */
 float halo_screen_scale(void);
+/* how much wider than tall a pixel of the screen shows: 1, or 4/3 for the
+Xbox's 640x480 on a widescreen television (port/xbox/src/d3d8_nv2a.c) */
+float halo_screen_pixel_aspect(void);
 /* takes up a new width between frames (F11); returns the width */
 long halo_screen_commit(void);
 /* the shadow maps' pixels for each of their 128 texels each way, a power of

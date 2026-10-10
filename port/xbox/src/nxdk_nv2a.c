@@ -34,6 +34,8 @@ after them.
 #define KICK_BYTES (16UL * 1024)
 
 static BOOL gpu_ready;
+/* the console's video setting (the dashboard's), as the mode was set */
+static DWORD video_settings;
 static uint32_t *push_buffer_head;
 static struct s_CtxDma color_dma, zeta_dma, report_dma;
 static volatile unsigned long *reports;
@@ -42,11 +44,14 @@ __attribute__((constructor)) static void gpu_start(void)
 {
 	int status;
 
+	/* (480p, rather than 480i, where the console's setting allows it and
+	the cable carries it: nxdk's choice) */
 	if (!XVideoSetMode(640, 480, 32, REFRESH_DEFAULT))
 	{
 		platform_log("GPU: cannot set the 640x480 video mode");
 		return;
 	}
+	video_settings = XVideoGetEncoderSettings();
 	pb_size(PUSH_BUFFER_BYTES);
 	status = pb_init();
 	if (status)
@@ -73,8 +78,15 @@ __attribute__((constructor)) static void gpu_start(void)
 	pb_reset();
 	push_buffer_head = pb_begin();
 	gpu_ready = TRUE;
-	platform_log("GPU: pbkit started, %lux%lu, %lu KB push buffer", (unsigned long)pb_back_buffer_width(),
-		(unsigned long)pb_back_buffer_height(), PUSH_BUFFER_BYTES / 1024);
+	platform_log("GPU: pbkit started, %lux%lu, %lu KB push buffer; the console's video setting %s%s",
+		(unsigned long)pb_back_buffer_width(), (unsigned long)pb_back_buffer_height(), PUSH_BUFFER_BYTES / 1024,
+		video_settings & VIDEO_WIDESCREEN ? "16:9" : video_settings & VIDEO_LETTERBOX ? "letterbox" : "4:3",
+		video_settings & VIDEO_MODE_480P ? ", 480p allowed" : "");
+}
+
+int xbox_video_widescreen(void)
+{
+	return (video_settings & VIDEO_WIDESCREEN) != 0;
 }
 
 int xbox_gpu_ready(void)

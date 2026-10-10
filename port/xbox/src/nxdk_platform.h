@@ -70,6 +70,8 @@ before it (d3d8_nv2a.c) */
 #define XBOX_GPU_FENCE_OFFSET XBOX_GPU_REPORT_BYTES
 /* whether pbkit started (with the video mode) */
 int xbox_gpu_ready(void);
+/* whether the console's video setting is widescreen (16:9) */
+int xbox_video_widescreen(void);
 void xbox_gpu_screen(unsigned long *width, unsigned long *height, unsigned long *pitch);
 /* the reports' memory, or NULL */
 volatile unsigned long *xbox_gpu_reports(void);

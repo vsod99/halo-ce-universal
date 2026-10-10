@@ -296,6 +296,12 @@ void halo_screen_ui_offset(unsigned char centered)
 	ui_offset = centered ? (halo_screen_width() - 640) / 2 : 0;
 }
 
+/* the display's pixels are square: a wider screen has more of them */
+float halo_screen_pixel_aspect(void)
+{
+	return 1.0f;
+}
+
 /* ---------- state the XDK header's inline functions read and write */
 
 DWORD D3D__RenderState[D3DRS_MAX];
