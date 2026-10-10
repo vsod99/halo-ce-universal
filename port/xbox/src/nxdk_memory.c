@@ -60,6 +60,29 @@ void platform_contiguous_free(void *address)
 		MmFreeContiguousMemory(address);
 }
 
+/* the largest contiguous block to be had, in KB (for reports of its running
+out: the game's heap takes the low half's free pages too) */
+unsigned long xbox_contiguous_largest_kb(void)
+{
+	unsigned long low = 0, high = 64 * 1024 * 1024 / PAGE_BYTES;
+
+	/* (pages: had at low, not at high) */
+	while (high - low > 1)
+	{
+		unsigned long middle = (low + high) / 2;
+		void *block = MmAllocateContiguousMemoryEx(middle * PAGE_BYTES, 0, 0xFFFFFFFF, 0, PAGE_READWRITE);
+
+		if (block)
+		{
+			MmFreeContiguousMemory(block);
+			low = middle;
+		}
+		else
+			high = middle;
+	}
+	return low * PAGE_BYTES / 1024;
+}
+
 /* ---------- the game state */
 
 void *xbox_game_state_allocate(unsigned long address, unsigned long size)

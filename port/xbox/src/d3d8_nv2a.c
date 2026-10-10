@@ -41,6 +41,7 @@ read (the synchronisation section).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define SCREEN_WIDTH 640
 #define SCREEN_HEIGHT 480
@@ -121,8 +122,16 @@ static float bits_float(DWORD bits)
 	return value;
 }
 
+static void triangles_close(void);
+
+/* (any method but an immediate draw's vertices ends the triangles that
+fans were joined into: triangles_close) */
+static BOOL triangles_open, immediate_inside;
+
 static DWORD *push_begin(unsigned long dwords)
 {
+	if (triangles_open && !immediate_inside)
+		triangles_close();
 	return (DWORD *)xbox_gpu_begin(dwords);
 }
 
@@ -770,6 +779,8 @@ void WINAPI D3DResource_BlockUntilNotBusy(D3DResource *resource)
 
 BOOL WINAPI D3DDevice_IsBusy(void)
 {
+	if (triangles_open)
+		triangles_close();
 	return xbox_gpu_busy();
 }
 
@@ -782,6 +793,8 @@ void WINAPI D3DDevice_InsertCallback(D3DCALLBACKTYPE type, D3DCALLBACK callback,
 	(void)type;
 	if (callback)
 	{
+		if (triangles_open)
+			triangles_close();
 		xbox_gpu_wait_idle();
 		callback(context);
 	}
@@ -1196,7 +1209,9 @@ static void art_decode(struct art_texture *art, const unsigned char *png, unsign
 		PAGE_READWRITE);
 	if (!texels)
 	{
-		platform_log("menus: no memory for a %lux%lu picture; not drawn", width, height);
+		platform_log("menus: no memory for a %lux%lu picture; not drawn (pictures hold %lu KB, the largest "
+			"contiguous block is %lu KB, %ld KB free)", width, height, art_bytes / 1024, xbox_contiguous_largest_kb(),
+			sysconf(_SC_AVPHYS_PAGES) * 4);
 		free(pixels);
 		art->failed = TRUE;
 		return;
@@ -1742,7 +1757,98 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 	begin_end(NV097_SET_BEGIN_END_OP_END);
 }
 
-/* ---------- immediate mode: vertices written into the push buffer */
+/* ---------- immediate mode: vertices written into the push buffer
+
+The game draws text a character at a time, each a fan of four vertices
+(rasterizer_xbox_text.c): over 1200 draws a frame on the server browser,
+which xemu drew at 10 fps. A fan's words wait here until its End, and one
+whose vertices all write the same methods (so that a vertex written again
+is all of it) is written as its triangles, 0 1 2, 0 2 3 ..., into a
+triangle list left open, which the fans after it join until a method of any
+other kind (push_begin). The same triangles in the same order: the same
+pixels. */
+
+#define HELD_WORDS 128
+#define HELD_VERTICES 16
+
+static struct
+{
+	BOOL holding;
+	DWORD words[HELD_WORDS];
+	unsigned long count;
+	/* where each vertex's words begin (a vertex ends at its position's) */
+	unsigned long starts[HELD_VERTICES + 1];
+	unsigned long vertices;
+} held;
+
+static void triangles_close(void)
+{
+	triangles_open = FALSE;
+	begin_end(NV097_SET_BEGIN_END_OP_END);
+}
+
+static void words_push(const DWORD *words, unsigned long count)
+{
+	DWORD *p = push_begin(count);
+
+	memcpy(p, words, count * 4);
+	push_end(p + count);
+}
+
+/* the held fan as drawn (a fan of other vertices, or too long to hold) */
+static void held_write_fan(void)
+{
+	held.holding = FALSE;
+	if (triangles_open)
+		triangles_close();
+	begin_end(D3DPT_TRIANGLEFAN);
+	words_push(held.words, held.count);
+}
+
+/* whether each held vertex writes the methods the first does */
+static BOOL held_vertices_alike(void)
+{
+	unsigned long length = held.starts[1] - held.starts[0], vertex, offset;
+
+	if (held.vertices < 3 || held.starts[held.vertices] != held.count)
+		return FALSE;
+	for (vertex = 1; vertex < held.vertices; vertex++)
+	{
+		const DWORD *first = held.words, *words = held.words + held.starts[vertex];
+
+		if (held.starts[vertex + 1] - held.starts[vertex] != length)
+			return FALSE;
+		for (offset = 0; offset < length; offset += 1 + ((first[offset] >> 18) & METHOD_MAXIMUM_COUNT))
+		{
+			if (words[offset] != first[offset])
+				return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+static void held_vertex_push(unsigned long vertex)
+{
+	words_push(held.words + held.starts[vertex], held.starts[vertex + 1] - held.starts[vertex]);
+}
+
+/* a vertex's words: held in a fan, else written */
+static void immediate_push(const DWORD *words, unsigned long count, BOOL position)
+{
+	if (held.holding)
+	{
+		if (held.count + count <= HELD_WORDS && held.vertices + position <= HELD_VERTICES)
+		{
+			memcpy(held.words + held.count, words, count * 4);
+			held.count += count;
+			if (position)
+				held.starts[++held.vertices] = held.count;
+			return;
+		}
+		held_write_fan();
+	}
+	words_push(words, count);
+}
 
 void WINAPI D3DDevice_Begin(D3DPRIMITIVETYPE primitive_type)
 {
@@ -1752,17 +1858,53 @@ void WINAPI D3DDevice_Begin(D3DPRIMITIVETYPE primitive_type)
 		trace_draw("immediate", primitive_type, 0);
 		trace_immediate_pending = TRUE;
 	}
-	begin_end(primitive_type);
+	if (primitive_type == D3DPT_TRIANGLEFAN)
+	{
+		held.holding = TRUE;
+		held.count = 0;
+		held.vertices = 0;
+		held.starts[0] = 0;
+	}
+	else
+		begin_end(primitive_type);
+	immediate_inside = TRUE;
 }
 
 void WINAPI D3DDevice_End(void)
 {
+	if (held.holding)
+	{
+		unsigned long vertex;
+
+		held.holding = FALSE;
+		if (!held_vertices_alike())
+		{
+			held_write_fan();
+			begin_end(NV097_SET_BEGIN_END_OP_END);
+			immediate_inside = FALSE;
+			return;
+		}
+		if (!triangles_open)
+		{
+			begin_end(D3DPT_TRIANGLELIST);
+			triangles_open = TRUE;
+		}
+		for (vertex = 1; vertex + 1 < held.vertices; vertex++)
+		{
+			held_vertex_push(0);
+			held_vertex_push(vertex);
+			held_vertex_push(vertex + 1);
+		}
+		immediate_inside = FALSE;
+		return;
+	}
+	immediate_inside = FALSE;
 	begin_end(NV097_SET_BEGIN_END_OP_END);
 }
 
 void WINAPI D3DDevice_SetVertexData2f(INT reg, FLOAT a, FLOAT b)
 {
-	DWORD *p = push_begin(3);
+	DWORD words[3];
 
 	if (trace_immediate_pending && reg == 0)
 	{
@@ -1770,36 +1912,40 @@ void WINAPI D3DDevice_SetVertexData2f(INT reg, FLOAT a, FLOAT b)
 		trace_immediate_pending = FALSE;
 	}
 
-	PUSH2(p, NV097_SET_VERTEX_DATA2F_M + reg * 8, float_bits(a), float_bits(b));
-	push_end(p);
+	words[0] = METHOD(NV097_SET_VERTEX_DATA2F_M + reg * 8, 2);
+	words[1] = float_bits(a);
+	words[2] = float_bits(b);
+	immediate_push(words, 3, reg == 0);
 }
 
 void WINAPI D3DDevice_SetVertexData4f(INT reg, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 {
-	DWORD *p = push_begin(5);
+	DWORD words[5];
 
-	*p++ = METHOD(NV097_SET_VERTEX_DATA4F_M + reg * 16, 4);
-	*p++ = float_bits(a);
-	*p++ = float_bits(b);
-	*p++ = float_bits(c);
-	*p++ = float_bits(d);
-	push_end(p);
+	words[0] = METHOD(NV097_SET_VERTEX_DATA4F_M + reg * 16, 4);
+	words[1] = float_bits(a);
+	words[2] = float_bits(b);
+	words[3] = float_bits(c);
+	words[4] = float_bits(d);
+	immediate_push(words, 5, reg == 0);
 }
 
 void WINAPI D3DDevice_SetVertexData2s(INT reg, SHORT a, SHORT b)
 {
-	DWORD *p = push_begin(2);
+	DWORD words[2];
 
-	PUSH1(p, NV097_SET_VERTEX_DATA2S + reg * 4, (WORD)a | (DWORD)(WORD)b << 16);
-	push_end(p);
+	words[0] = METHOD(NV097_SET_VERTEX_DATA2S + reg * 4, 1);
+	words[1] = (WORD)a | (DWORD)(WORD)b << 16;
+	immediate_push(words, 2, reg == 0);
 }
 
 void WINAPI D3DDevice_SetVertexData4ub(INT reg, BYTE a, BYTE b, BYTE c, BYTE d)
 {
-	DWORD *p = push_begin(2);
+	DWORD words[2];
 
-	PUSH1(p, NV097_SET_VERTEX_DATA4UB + reg * 4, a | (DWORD)b << 8 | (DWORD)c << 16 | (DWORD)d << 24);
-	push_end(p);
+	words[0] = METHOD(NV097_SET_VERTEX_DATA4UB + reg * 4, 1);
+	words[1] = a | (DWORD)b << 8 | (DWORD)c << 16 | (DWORD)d << 24;
+	immediate_push(words, 2, reg == 0);
 }
 
 /* a D3DCOLOR's red, green, blue and alpha */

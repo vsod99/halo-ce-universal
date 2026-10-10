@@ -15,6 +15,8 @@ void platform_log(const char *format, ...) __attribute__((format(printf, 1, 2)))
 /* the game state's virtual memory at its fixed address
 (cache/physical_memory_map.c; nxdk_memory.c) */
 void *xbox_game_state_allocate(unsigned long address, unsigned long size);
+/* the largest block of contiguous memory to be had, in KB (nxdk_memory.c) */
+unsigned long xbox_contiguous_largest_kb(void);
 
 /* the controllers (nxdk_gamepads.c, for xinput_xbox.c) */
 /* (a report is an XINPUT_GAMEPAD's bytes) */
