@@ -8,15 +8,17 @@ here.
 
 The kernel gives contiguous memory only from the low 64 MB, even on a
 128 MB console, and ordinary virtual memory takes the low half's free pages
-before the upper half's (port/xbox/README.md, the probe). So the caches are
-contiguous and allocated first (cache/physical_memory_map.c), and the game
-state, which is larger on the native builds than on the Xbox
-(halo_port_capacity.h), is virtual memory at a fixed address instead of at
-physical 0x1A00000 (xbox_game_state_allocate).
+before the upper half's (port/xbox/README.md, the probe). So the caches the
+GPU reads are contiguous and allocated first (cache/physical_memory_map.c),
+then a pool of contiguous memory for later, and the game state, which is
+larger on the native builds than on the Xbox (halo_port_capacity.h), is
+virtual memory at a fixed address instead of at physical 0x1A00000
+(xbox_game_state_allocate), as the sound cache is virtual memory.
 */
 
 #include <xboxkrnl/xboxkrnl.h>
 #include <windows.h>
+#include <string.h>
 
 #include "nxdk_platform.h"
 
@@ -38,6 +40,108 @@ BOOL platform_is_contiguous(const void *address)
 		(unsigned long)address < CONTIGUOUS_BASE + CONTIGUOUS_SIZE;
 }
 
+/* Contiguous memory set aside before the game state is allocated
+(xbox_contiguous_reserve): a pool, its pages handed out when the kernel has
+no contiguous memory left. The game state and the heap are virtual memory,
+which the kernel gives the low 64 MB's free pages first, and only the low
+64 MB is had as contiguous (the program and the caches fill most of it):
+with nothing set aside, 3.4 MB was left once the game state was allocated,
+then less as the heap grew, too little for the menus' larger pictures. Set
+aside, the pool's pages are the upper half's instead, and its pages stay
+its own: given back to the kernel, the heap would take them. */
+#define POOL_BLOCK_BYTES (64UL * 1024)
+#define POOL_MAXIMUM_BYTES (12UL * 1024 * 1024)
+/* (the pool's blocks lie in the low 64 MB: its span, in pages) */
+#define POOL_MAXIMUM_SPAN (64UL * 1024 * 1024 / PAGE_BYTES)
+
+static struct
+{
+	unsigned long base;
+	unsigned long span;
+	/* each page: whether free, and at an allocation's first page, its
+	length in pages */
+	unsigned char free[POOL_MAXIMUM_SPAN];
+	unsigned short length[POOL_MAXIMUM_SPAN];
+	unsigned long pages, used_pages;
+	RTL_CRITICAL_SECTION lock;
+} pool;
+
+void xbox_contiguous_reserve(void)
+{
+	void *blocks[POOL_MAXIMUM_BYTES / POOL_BLOCK_BYTES];
+	unsigned long count = 0, index, low = 0xffffffffUL, high = 0;
+
+	RtlInitializeCriticalSection(&pool.lock);
+	while (count < POOL_MAXIMUM_BYTES / POOL_BLOCK_BYTES)
+	{
+		void *block = MmAllocateContiguousMemoryEx(POOL_BLOCK_BYTES, 0, 0xFFFFFFFF, 0, PAGE_READWRITE);
+
+		if (!block)
+			break;
+		blocks[count++] = block;
+		if ((unsigned long)block < low)
+			low = (unsigned long)block;
+		if ((unsigned long)block + POOL_BLOCK_BYTES > high)
+			high = (unsigned long)block + POOL_BLOCK_BYTES;
+	}
+	if (!count)
+		return;
+	pool.base = low;
+	pool.span = (high - low) / PAGE_BYTES;
+	for (index = 0; index < count; index++)
+		memset(pool.free + ((unsigned long)blocks[index] - low) / PAGE_BYTES, 1, POOL_BLOCK_BYTES / PAGE_BYTES);
+	pool.pages = count * (POOL_BLOCK_BYTES / PAGE_BYTES);
+}
+
+static void *pool_alloc(unsigned long pages, unsigned long alignment, DWORD protect)
+{
+	unsigned long first, run = 0;
+	void *result = NULL;
+
+	RtlEnterCriticalSection(&pool.lock);
+	/* the first free run long enough, from an aligned page */
+	for (first = 0; first + pages <= pool.span; first++)
+	{
+		if (!pool.free[first] || ((pool.base + first * PAGE_BYTES) & (alignment - 1)))
+			continue;
+		for (run = 0; run < pages && pool.free[first + run]; run++)
+			;
+		if (run == pages)
+			break;
+		first += run;
+	}
+	if (first + pages <= pool.span && run == pages)
+	{
+		memset(pool.free + first, 0, pages);
+		pool.length[first] = (unsigned short)pages;
+		pool.used_pages += pages;
+		result = (void *)(pool.base + first * PAGE_BYTES);
+	}
+	RtlLeaveCriticalSection(&pool.lock);
+	if (result && protect != PAGE_READWRITE)
+		MmSetAddressProtect(result, pages * PAGE_BYTES, protect);
+	return result;
+}
+
+/* whether the pool's (and so given back to it) */
+static BOOL pool_free(void *address)
+{
+	unsigned long first = ((unsigned long)address - pool.base) / PAGE_BYTES;
+
+	if (!pool.span || (unsigned long)address < pool.base || first >= pool.span)
+		return FALSE;
+	RtlEnterCriticalSection(&pool.lock);
+	if (pool.length[first])
+	{
+		MmSetAddressProtect(address, pool.length[first] * PAGE_BYTES, PAGE_READWRITE);
+		memset(pool.free + first, 1, pool.length[first]);
+		pool.used_pages -= pool.length[first];
+		pool.length[first] = 0;
+	}
+	RtlLeaveCriticalSection(&pool.lock);
+	return TRUE;
+}
+
 void *platform_contiguous_alloc(unsigned long size, unsigned long alignment,
 	unsigned long physical_address, DWORD protect)
 {
@@ -46,18 +150,39 @@ void *platform_contiguous_alloc(unsigned long size, unsigned long alignment,
 	size = (size + PAGE_BYTES - 1) & ~(PAGE_BYTES - 1);
 	if (alignment < PAGE_BYTES)
 		alignment = PAGE_BYTES;
-	if (physical_address == ANY_PHYSICAL_ADDRESS)
-		result = MmAllocateContiguousMemoryEx(size, 0, 0xFFFFFFFF, alignment, protect);
-	else
-		result = MmAllocateContiguousMemoryEx(size, physical_address, physical_address + size - 1, alignment, protect);
-	/* (a placed block is had exactly where asked or not at all) */
+	if (physical_address != ANY_PHYSICAL_ADDRESS)
+	{
+		/* (a placed block is had exactly where asked or not at all) */
+		return MmAllocateContiguousMemoryEx(size, physical_address, physical_address + size - 1, alignment,
+			protect);
+	}
+	result = MmAllocateContiguousMemoryEx(size, 0, 0xFFFFFFFF, alignment, protect);
+	if (!result && pool.pages)
+	{
+		static BOOL logged;
+
+		result = pool_alloc(size / PAGE_BYTES, alignment, protect);
+		if (!logged || !result)
+		{
+			platform_log("memory: contiguous memory from the pool set aside (%lu KB %s, %lu of its %lu KB in use)",
+				size / 1024, result ? "had" : "not had", pool.used_pages * (PAGE_BYTES / 1024),
+				pool.pages * (PAGE_BYTES / 1024));
+			logged = TRUE;
+		}
+	}
 	return result;
 }
 
 void platform_contiguous_free(void *address)
 {
-	if (platform_is_contiguous(address))
+	if (platform_is_contiguous(address) && !pool_free(address))
 		MmFreeContiguousMemory(address);
+}
+
+/* what is free in the pool, in KB */
+unsigned long xbox_contiguous_pool_free_kb(void)
+{
+	return (pool.pages - pool.used_pages) * (PAGE_BYTES / 1024);
 }
 
 /* the largest contiguous block to be had, in KB (for reports of its running
@@ -83,7 +208,35 @@ unsigned long xbox_contiguous_largest_kb(void)
 	return low * PAGE_BYTES / 1024;
 }
 
-/* ---------- the game state */
+/* the memory left, to the log */
+void xbox_memory_report(const char *when)
+{
+	MM_STATISTICS statistics;
+
+	statistics.Length = sizeof(statistics);
+	if (NT_SUCCESS(MmQueryStatistics(&statistics)))
+		platform_log("memory: %s: %lu KB free, the largest contiguous block %lu KB, %lu KB free in the pool set aside", when,
+			(unsigned long)statistics.AvailablePages * (PAGE_BYTES / 1024), xbox_contiguous_largest_kb(),
+			(pool.pages - pool.used_pages) * (PAGE_BYTES / 1024));
+}
+
+/* ---------- the game state, and other virtual memory */
+
+/* memory only the processor reads, anywhere (the sound cache: the sounds
+are mixed in software); XPhysicalFree frees it */
+void *xbox_virtual_allocate(unsigned long size)
+{
+	PVOID base = NULL;
+	SIZE_T region_size = size;
+	NTSTATUS status = NtAllocateVirtualMemory(&base, 0, &region_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+
+	if (!NT_SUCCESS(status))
+	{
+		platform_log("cannot have %lu KB of virtual memory (%08lx)", size / 1024, (unsigned long)status);
+		return NULL;
+	}
+	return base;
+}
 
 void *xbox_game_state_allocate(unsigned long address, unsigned long size)
 {
@@ -122,11 +275,11 @@ VOID WINAPI XPhysicalFree(LPVOID address)
 {
 	if (platform_is_contiguous(address))
 	{
-		MmFreeContiguousMemory(address);
+		platform_contiguous_free(address);
 	}
 	else if (address)
 	{
-		/* the game state (xbox_game_state_allocate) */
+		/* the game state and the sound cache (xbox_game_state_allocate, xbox_virtual_allocate) */
 		PVOID base = address;
 		SIZE_T region_size = 0;
 

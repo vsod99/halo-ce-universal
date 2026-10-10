@@ -77,21 +77,29 @@ void physical_memory_allocate(
 #ifdef HALO_XBOX
 	/* the original Xbox (port/xbox): the kernel gives contiguous memory only
 	from the low 64 MB, and ordinary virtual memory takes that half's free
-	pages first, so the caches, which the GPU and the sound hardware read,
-	are had first; then the game state, which only the CPU reads (the decals
-	copy their vertices out: rasterizer_xbox_decals.c), as virtual memory at
-	its fixed address (port/xbox/src/nxdk_memory.c) */
+	pages first, so the caches the GPU reads are had first, and contiguous
+	memory for later is set aside; then the sound cache and the game state,
+	which only the CPU reads (the decals copy their vertices out:
+	rasterizer_xbox_decals.c), as virtual memory, the game state at its
+	fixed address (port/xbox/src/nxdk_memory.c) */
 	{
 		extern void *xbox_game_state_allocate(unsigned long address, unsigned long size);
+		extern void *xbox_virtual_allocate(unsigned long size);
+		extern void xbox_contiguous_reserve(void);
+		extern void xbox_memory_report(char const *when);
 
 		physical_memory_map_globals.tag_cache_base_address = XPhysicalAlloc(TAG_CACHE_SIZE, TAG_CACHE_BASE_ADDRESS & 0x7FFFFFFF, 0, PAGE_READWRITE);
 		match_assert(__FILE__, __LINE__, (unsigned long)physical_memory_map_globals.tag_cache_base_address==TAG_CACHE_BASE_ADDRESS);
 		physical_memory_map_globals.texture_cache_base_address = XPhysicalAlloc(TEXTURE_CACHE_SIZE, -1, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
 		match_assert(__FILE__, __LINE__, physical_memory_map_globals.texture_cache_base_address);
-		physical_memory_map_globals.sound_cache_base_address = XPhysicalAlloc(SOUND_CACHE_SIZE, -1, 0, PAGE_READWRITE);
+		xbox_contiguous_reserve();
+		/* (the sounds are mixed by the processor, not the sound hardware:
+		port/linux/src/dsound_sdl.c) */
+		physical_memory_map_globals.sound_cache_base_address = xbox_virtual_allocate(SOUND_CACHE_SIZE);
 		match_assert(__FILE__, __LINE__, physical_memory_map_globals.sound_cache_base_address);
 		physical_memory_map_globals.game_state_base_address = xbox_game_state_allocate(GAME_STATE_BASE_ADDRESS, GAME_STATE_SIZE);
 		match_assert(__FILE__, __LINE__, (unsigned long)physical_memory_map_globals.game_state_base_address==GAME_STATE_BASE_ADDRESS);
+		xbox_memory_report("the caches and the game state allocated");
 		return;
 	}
 #endif

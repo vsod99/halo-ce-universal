@@ -55,7 +55,7 @@ pictures change.
 | Unit | What |
 | --- | --- |
 | `nxdk_main.c` | Start-up, before the game's `main`: the log, the hard disk as `E:`, `E:\halo`; Quit goes to the dashboard |
-| `nxdk_memory.c` | `XPhysicalAlloc` and page protection from the kernel's contiguous memory; the game state as virtual memory at 0x40000000 (`cache/physical_memory_map.c` takes the caches first) |
+| `nxdk_memory.c` | `XPhysicalAlloc` and page protection from the kernel's contiguous memory, and a pool of it set aside before the game state for when the kernel's runs out; the game state as virtual memory at 0x40000000 and the sound cache as virtual memory (`cache/physical_memory_map.c` takes the GPU's caches first); the memory left in the log (at start, once the caches are had, and with each `frame N, X fps` line) |
 | `nxdk_posix.c` | File descriptors and the file half of `port/linux/src/posix.h` over nxdk's Windows API; `D:` is the XBE's folder (maps), `E:/halo` the settings and saves |
 | `nxdk_libc.c` | What pdclib lacks or gets wrong: printf's floating point, `strtod`, `fmod`, `scalbn`, `lrint` (musl's: `port/third_party/musl-stdio`) |
 | `sdl_files.c` | The SDL file functions `port_config.c` and `menu_files.c` call (`include/SDL3/SDL.h`) |
@@ -247,6 +247,20 @@ The probe's results (xemu 0.8.136):
   port must allocate everything contiguous first (the caches, and a pool for
   Direct3D's frame buffers, push buffer and vertex buffers) and only then
   the game state and heap, or the low half runs out.
+
+How it runs (Oct 9, in xemu): the program itself takes 20 MB of the low
+half (its zeroed globals were 19 MB until the Xbox's limits on Custom
+Edition maps and the profiler's history were cut, 7 MB), the tag and
+texture caches 44 MB, so the low half has about 10 MB left for everything
+else the GPU reads: the menus' pictures, render targets, decal vertices.
+The game state and the heap, virtual memory, would take those pages first:
+with the game state allocated, 3.4 MB of it was left, and the menus'
+larger pictures were sometimes not drawn. So `nxdk_memory.c` sets that
+memory aside as a pool (9.9 MB) before the game state, and hands its pages
+out when the kernel's contiguous memory runs out; the sound cache, which the
+processor mixes from, is virtual memory too. In use: the server browser 5.8
+MB of the pool (its pictures 2.3 MB), b30 3.2 MB, Blood Gulch 3.9 MB, with
+5.5-6.4 MB free besides.
 
 Cerbios's hybrid kernel runs its debugger on COM1 when it sees the SuperIO
 chip, so programs log on COM2; the runner saves COM1 as `com1.bin`.

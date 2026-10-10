@@ -26,8 +26,14 @@ ui_widget.c ask this file for their names, descriptions and pictures.
 
 /* the most CE multiplayer maps the level list holds, which every map list
 (the menus', the Map screen's) has room for: as many as their display
-indices fit before the campaigns' (custom_edition_maps.c) */
+indices fit before the campaigns' (custom_edition_maps.c). The original
+Xbox's hold fewer: their room is memory the program has from the start
+(5 MB of its 128 MB at 8192), and its hard disk holds a few dozen maps */
+#ifdef HALO_XBOX
+#define CUSTOM_EDITION_MAPS_MAXIMUM 512
+#else
 #define CUSTOM_EDITION_MAPS_MAXIMUM 8192
+#endif
 
 /* ---------- structures */
 

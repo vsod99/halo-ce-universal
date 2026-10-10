@@ -15,8 +15,18 @@ void platform_log(const char *format, ...) __attribute__((format(printf, 1, 2)))
 /* the game state's virtual memory at its fixed address
 (cache/physical_memory_map.c; nxdk_memory.c) */
 void *xbox_game_state_allocate(unsigned long address, unsigned long size);
+/* virtual memory anywhere, for what only the processor reads (the sound
+cache) */
+void *xbox_virtual_allocate(unsigned long size);
+/* sets contiguous memory aside for later, before the game state is
+allocated (nxdk_memory.c) */
+void xbox_contiguous_reserve(void);
+/* what is free in the contiguous memory set aside, in KB (nxdk_memory.c) */
+unsigned long xbox_contiguous_pool_free_kb(void);
 /* the largest block of contiguous memory to be had, in KB (nxdk_memory.c) */
 unsigned long xbox_contiguous_largest_kb(void);
+/* the memory left and the largest contiguous block, to the log */
+void xbox_memory_report(const char *when);
 
 /* the controllers (nxdk_gamepads.c, for xinput_xbox.c) */
 /* (a report is an XINPUT_GAMEPAD's bytes) */
