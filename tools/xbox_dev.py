@@ -327,7 +327,7 @@ class Xemu:
     (a socket xemu connects to), the kernel debugger's COM1 in out/com1.bin,
     and QMP to stop it"""
     def __init__(self, config: dict, iso: Path, out: Path, headless: bool = False, gdb: bool = False,
-                 wav: bool = False, files: dict = None, net: list = None):
+                 wav: bool = False, files: dict = None, net: list = None, gdb_port: int = 0):
         xemu = expand(config["tools"].get("xemu", "/Applications/xemu.app/Contents/MacOS/xemu"))
         out.mkdir(parents=True, exist_ok=True)
         self.work = Path(tempfile.mkdtemp(prefix="xemu-"))
@@ -353,6 +353,9 @@ class Xemu:
             # the sound card's output to a file instead of the Mac's speakers
             # (xemu names no audio backend of its own to capture from)
             command += ["-audio", f"driver=wav,path={out / 'sound.wav'}"]
+        if gdb_port:
+            # (the profile's sampler: Sampler)
+            command += ["-gdb", f"tcp:127.0.0.1:{gdb_port}"]
         if gdb:
             command += ["-s", "-S"]
             print("gdb: target remote localhost:1234 (the CPU waits for 'continue')")
@@ -402,9 +405,132 @@ def listener() -> Path:
     return program
 
 
+class Sampler:
+    """a sampling profile of the Xbox's processor: xemu's gdb stub stops the
+    machine about every interval, the instruction pointer is read, and it
+    runs on; the samples, by function (halo.exe's DWARF, llvm-symbolizer)
+    and by source folder, go to profile.txt in the run's folder. The
+    processor is xemu's, whose instructions do not cost what a Pentium III's
+    do (the x87's least of all): shares to find where time goes, not
+    timings"""
+    def __init__(self, config: dict, port: int, start: float, seconds: float, out: Path, interval: float = 0.01):
+        self.config = config
+        self.port = port
+        self.start = start
+        self.seconds = seconds
+        self.out = out
+        self.interval = interval
+        self.samples = []
+        self.thread = None
+
+    def begin(self) -> None:
+        self.thread = threading.Thread(target=self.sample, daemon=True)
+        self.thread.start()
+
+    def send(self, data: str) -> None:
+        self.connection.sendall(f"${data}#{sum(data.encode()) % 256:02x}".encode())
+
+    def receive(self) -> str:
+        """the stub's next packet (acknowledged), skipping its acknowledgements"""
+        while True:
+            while b"#" not in self.pending or len(self.pending) < self.pending.index(b"#") + 3:
+                data = self.connection.recv(4096)
+                if not data:
+                    raise ConnectionError("xemu's gdb stub closed")
+                self.pending += data
+            start = self.pending.find(b"$")
+            end = self.pending.index(b"#")
+            if start < 0 or start > end:
+                self.pending = self.pending[end + 3:]
+                continue
+            packet = self.pending[start + 1:end].decode("latin-1")
+            self.pending = self.pending[end + 3:]
+            self.connection.sendall(b"+")
+            return packet
+
+    def sample(self) -> None:
+        time.sleep(self.start)
+        try:
+            self.connection = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+            self.pending = b""
+            # (the stub stops the machine when it is attached to)
+            self.send("?")
+            self.receive()
+            self.send("c")
+            print(f"(profile: sampling for {self.seconds:.0f} s)", flush=True)
+            end = time.time() + self.seconds
+            while time.time() < end:
+                time.sleep(self.interval)
+                self.connection.sendall(b"\x03")
+                self.receive()
+                # (register 8: eip)
+                self.send("p8")
+                self.samples.append(int.from_bytes(bytes.fromhex(self.receive()), "little"))
+                self.send("c")
+            # (detached without waiting for its answer: the machine runs on)
+            self.send("D")
+            self.connection.close()
+        except (OSError, ConnectionError, ValueError) as error:
+            print(f"(profile: {error})", flush=True)
+        self.report()
+
+    def report(self) -> None:
+        if not self.samples:
+            return
+        symbolizer = expand(self.config["tools"].get("llvm_bin", "/opt/homebrew/opt/llvm/bin")) / "llvm-symbolizer"
+        addresses = sorted({address for address in self.samples if address < 0x80000000})
+        names = {}
+        if addresses:
+            result = subprocess.run([str(symbolizer), "--output-style=JSON", "--no-inlines", "--relative-address",
+                                     f"--obj={ROOT / 'build/xbox/halo.exe'}"],
+                                    input="\n".join(hex(address - 0x10000) for address in addresses),
+                                    stdout=subprocess.PIPE, text=True)
+            entries = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+            for address, entry in zip(addresses, entries):
+                symbol = (entry.get("Symbol") or [{}])[0]
+                name = symbol.get("FunctionName") or "?"
+                where = symbol.get("FileName") or ""
+                names[address] = (name, where)
+        # (code without DWARF, nxdk's libraries: the link map's symbols, the
+        # nearest below)
+        import bisect
+        symbols = []
+        for line in (ROOT / "build/xbox/halo.exe.map").read_text(errors="replace").splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{8}", parts[0]) and \
+                    re.fullmatch(r"[0-9a-f]{16}", parts[2]):
+                symbols.append((int(parts[2], 16), parts[1].lstrip("_"), parts[-1]))
+        symbols.sort()
+        starts = [symbol[0] for symbol in symbols]
+        for address, (name, where) in list(names.items()):
+            index = bisect.bisect_right(starts, address) - 1
+            if name == "?" and index >= 0:
+                names[address] = (symbols[index][1], symbols[index][2].split(":")[0])
+        functions, folders = {}, {}
+        for address in self.samples:
+            if address >= 0x80000000:
+                name, folder = "(kernel)", "(kernel)"
+            else:
+                name, where = names.get(address, ("?", ""))
+                where = os.path.relpath(where, ROOT) if where.startswith("/") else where
+                folder = (os.path.dirname(where) or where) if where else "(unknown)"
+                name = name if name not in ("?", "") else f"(unknown in {folder})"
+            functions[name] = functions.get(name, 0) + 1
+            folders[folder] = folders.get(folder, 0) + 1
+        total = len(self.samples)
+        lines = [f"{total} samples, about every {self.interval * 1000:.0f} ms", "", "by source folder:"]
+        lines += [f"{count * 100 / total:6.1f}%  {name}" for name, count in
+                  sorted(folders.items(), key=lambda item: -item[1])[:30]]
+        lines += ["", "by function:"]
+        lines += [f"{count * 100 / total:6.1f}%  {name}" for name, count in
+                  sorted(functions.items(), key=lambda item: -item[1])[:60]]
+        (self.out / "profile.txt").write_text("\n".join(lines) + "\n")
+        print(f"(profile: {self.out.relative_to(ROOT) / 'profile.txt'})", flush=True)
+
+
 def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, presses: list,
         shots: list, environment: list, wav: bool = False, listen: bool = False,
-        router_forward: bool = False) -> int:
+        router_forward: bool = False, profile: str = "") -> int:
     router = RouterForward() if router_forward else None
     forwarded = ForwardedPort(router.port, router.external_address) if router else None
     if forwarded:
@@ -412,7 +538,12 @@ def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, 
         environment = environment + forwarded.environment() + ["HALO_NET_ALLOW_UPNP=false"]
     iso = build(config, project, environment)
     out = ROOT / "build/xbox/runs" / time.strftime("%Y%m%d-%H%M%S")
-    machine = Xemu(config, iso, out, headless, gdb, wav or listen, net=forwarded.net() if forwarded else None)
+    sampler = None
+    if profile:
+        start, _, seconds = profile.partition(":")
+        sampler = Sampler(config, free_port(), float(start), float(seconds or 30), out)
+    machine = Xemu(config, iso, out, headless, gdb, wav or listen, net=forwarded.net() if forwarded else None,
+                   gdb_port=sampler.port if sampler else 0)
     # (xemu plays the AC'97 controller's sound into a WAV file alone: its SDL
     # output crashes for it; the player follows the file)
     player = subprocess.Popen([str(listener()), str(out / "sound.wav")]) if listen else None
@@ -424,6 +555,8 @@ def run(config: dict, project: Path, timeout: float, headless: bool, gdb: bool, 
     try:
         connection = machine.connect(deadline)
         if connection is not None:
+            if sampler:
+                sampler.begin()
             if presses:
                 threading.Thread(target=press_buttons, args=(presses, time.time()), daemon=True).start()
             if shots:
@@ -986,6 +1119,9 @@ def main() -> None:
                             help="play the sound on the Mac as it comes (xemu cannot play the AC'97 "
                                  "controller's itself): recorded as with --wav, and followed by "
                                  "tools/xbox_listen.swift")
+    run_parser.add_argument("--profile", default="", metavar="START:SECONDS",
+                            help="sample the Xbox's processor through xemu's gdb stub for SECONDS, START seconds "
+                                 "after the program's first log line: profile.txt in the run's folder")
     run_parser.add_argument("--router-forward", action="store_true",
                             help="ask the Mac's network's router (UPnP) to forward a UDP port to the Mac, which "
                                  "xemu forwards to the Xbox's network.tunnel_port, and tell the Xbox (as its only "
@@ -1025,7 +1161,8 @@ def main() -> None:
                       ["HALO_NETWORK_TEST=join"] + args.join_env, args.env, args.headless, args.internet,
                       args.forward, args.upnp))
     sys.exit(run(config, args.project.resolve(), args.timeout, args.headless, args.gdb, parse_presses(args.press),
-            args.shot, run_environment(args), args.wav, args.listen, args.router_forward))
+            args.shot, run_environment(args), args.wav, args.listen, args.router_forward,
+            args.profile))
 
 
 if __name__ == "__main__":

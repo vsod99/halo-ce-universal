@@ -189,6 +189,20 @@ brokers and STUN are the public ones and the machines find each other but
 cannot connect. UPnP is off unless `--upnp`: the machines would ask the
 Mac's network's router to forward ports to xemu's address.
 
+### Where the time goes
+
+    python3 tools/xbox_dev.py run build/xbox/halo --profile 80:45 ...
+
+samples the Xbox's processor about every 10 ms for 45 s, 80 s after the
+program's first log line: xemu's gdb stub stops the machine, the
+instruction pointer is read, and it runs on. `profile.txt` in the run's
+folder has the shares by function (halo.exe's DWARF, and the link map for
+nxdk's libraries) and by source folder. xemu's instructions do not cost a
+Pentium III's, so these are shares, not timings. Play tests want a release
+build (`python3 configure.py --release`): in a 30-player internet game the
+assertions and checked accessors of the default build took the frame rate
+from 15-22 fps to 4-6 in xemu.
+
 ### Joining someone's game over the internet
 
     python3 tools/xbox_dev.py run build/xbox/halo --router-forward \
