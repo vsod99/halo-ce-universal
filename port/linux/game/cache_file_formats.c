@@ -1904,14 +1904,13 @@ static enum cache_file_status structure_bsps_verify(
 		{
 			return load_fail(state, _cache_file_status_bad_structure_bsp_range, (uint32_t)file_offset);
 		}
-		bsp = malloc((size_t)size);
-		if (!bsp)
-		{
-			return load_fail(state, _cache_file_status_out_of_memory, (uint32_t)size);
-		}
+		/* read to its own place to be checked, which nothing holds yet (the
+		tags from resource maps go below the lowest structure BSP, after
+		this): no copy of a BSP of several MB is made (the original Xbox has
+		a few MB of heap in a map) */
+		bsp = state->tag_cache + (bsp_address - CUSTOM_EDITION_TAG_CACHE_ADDRESS);
 		if (!state->map->read(state->map->context, (uint32_t)file_offset, (uint32_t)size, bsp))
 		{
-			free(bsp);
 			return load_fail(state, _cache_file_status_read_failed, (uint32_t)file_offset);
 		}
 		bsp_pointer = read_u32(bsp + STRUCTURE_BSP_HEADER_BSP_OFFSET);
@@ -1922,11 +1921,9 @@ static enum cache_file_status structure_bsps_verify(
 			bsp_pointer < bsp_address + STRUCTURE_BSP_HEADER_BYTES ||
 			bsp_pointer - bsp_address >= (uint32_t)size)
 		{
-			free(bsp);
 			return load_fail(state, _cache_file_status_bad_structure_bsp_header, (uint32_t)file_offset);
 		}
 		status = structure_bsp_geometry_verify(state, bsp, (uint32_t)size, bsp_address);
-		free(bsp);
 		if (status != _cache_file_status_ok)
 		{
 			return status;
