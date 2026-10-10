@@ -628,6 +628,11 @@ struct game_state_allocation
 
 static struct game_state_allocation game_state_allocations[MAXIMUM_GAME_STATE_ALLOCATIONS];
 static long game_state_allocation_count;
+#ifdef HALO_XBOX
+/* each data array's valid flag before an image was read over it
+(game_state_image_new) */
+static boolean game_state_allocation_live_valid[MAXIMUM_GAME_STATE_ALLOCATIONS];
+#endif
 
 static struct game_state_allocation *game_state_allocation_new(
 	short kind,
@@ -644,6 +649,24 @@ static struct game_state_allocation *game_state_allocation_new(
 	allocation->address = address;
 
 	return allocation;
+}
+
+/* the data array of an allocation: a data array's own, a cache's blocks
+(behind it); a memory pool's none, whose valid flag is never read */
+static struct data_array *game_state_allocation_data(
+	struct game_state_allocation const *allocation)
+{
+	static struct data_array none;
+
+	switch (allocation->kind)
+	{
+	case _game_state_allocation_data:
+		return allocation->address;
+	case _game_state_allocation_lruv_cache:
+		return (struct data_array *)((struct lruv_cache *)allocation->address + 1);
+	default:
+		return &none;
+	}
 }
 
 /* whether [address, address+size) lies in the game state */
@@ -681,7 +704,8 @@ static boolean game_state_image_data_valid(
 	byte *image,
 	struct data_array *live,
 	short maximum_count,
-	short element_size)
+	short element_size,
+	boolean live_valid)
 {
 	struct data_array *data = game_state_image_pointer(image, live);
 	char const *name;
@@ -706,7 +730,7 @@ static boolean game_state_image_data_valid(
 	made for this map too: data_make_valid) */
 	if (data->valid && !data->next_identifier)
 		return game_state_image_refuse(name, "is a data array with no identifier to give out");
-	if (!data->valid && live->valid)
+	if (!data->valid && live_valid)
 		return game_state_image_refuse(name, "is a data array not made for the map");
 
 	return TRUE;
@@ -797,7 +821,8 @@ static boolean game_state_image_memory_pool_valid(
 static boolean game_state_image_lruv_cache_valid(
 	byte *image,
 	struct lruv_cache *live,
-	struct game_state_allocation const *allocation)
+	struct game_state_allocation const *allocation,
+	boolean blocks_live_valid)
 {
 	struct lruv_cache *cache = game_state_image_pointer(image, live);
 	struct data_array *blocks_live = (struct data_array *)(live + 1);
@@ -815,7 +840,8 @@ static boolean game_state_image_lruv_cache_valid(
 	cache->delete_block_proc = allocation->delete_block_proc;
 	cache->locked_block_proc = allocation->locked_block_proc;
 
-	return game_state_image_data_valid(image, blocks_live, allocation->maximum_count, sizeof(struct lruv_cache_block));
+	return game_state_image_data_valid(image, blocks_live, allocation->maximum_count, sizeof(struct lruv_cache_block),
+		blocks_live_valid);
 }
 
 boolean game_state_image_accept(
@@ -829,19 +855,25 @@ boolean game_state_image_accept(
 	for (index = 0; index < game_state_allocation_count; index++)
 	{
 		struct game_state_allocation const *allocation = &game_state_allocations[index];
+		boolean live_valid = game_state_allocation_data(allocation)->valid;
 		boolean valid;
+
+#ifdef HALO_XBOX
+		if (image == game_state_globals.base_address)
+			live_valid = game_state_allocation_live_valid[index];
+#endif
 
 		switch (allocation->kind)
 		{
 		case _game_state_allocation_data:
 			valid = game_state_image_data_valid(image, allocation->address, allocation->maximum_count,
-				allocation->element_size);
+				allocation->element_size, live_valid);
 			break;
 		case _game_state_allocation_memory_pool:
 			valid = game_state_image_memory_pool_valid(image, allocation->address, allocation->size);
 			break;
 		case _game_state_allocation_lruv_cache:
-			valid = game_state_image_lruv_cache_valid(image, allocation->address, allocation);
+			valid = game_state_image_lruv_cache_valid(image, allocation->address, allocation, live_valid);
 			break;
 		default:
 			valid = FALSE;
@@ -850,10 +882,48 @@ boolean game_state_image_accept(
 		if (!valid)
 			return FALSE;
 	}
-	csmemcpy(game_state_globals.base_address, image, size);
+	if (image != game_state_globals.base_address)
+		csmemcpy(game_state_globals.base_address, image, size);
 	error(_error_silent, "the saved game is taken");
 
 	return TRUE;
+}
+
+/* The image is read beside the game state, and copied over it once checked.
+The original Xbox has no room for a second game state (20 MB of its 128,
+with a few free in a map): the image is read over the game state itself
+and checked there, and one not taken leaves the map to start over. */
+void *game_state_image_new(
+	long size)
+{
+#ifdef HALO_XBOX
+	long index;
+
+	for (index = 0; index < game_state_allocation_count; index++)
+	{
+		game_state_allocation_live_valid[index] =
+			game_state_allocation_data(&game_state_allocations[index])->valid;
+	}
+	(void)size;
+
+	return game_state_globals.base_address;
+#else
+	return malloc(size);
+#endif
+}
+
+void game_state_image_delete(
+	void *image,
+	boolean taken)
+{
+#ifdef HALO_XBOX
+	(void)image;
+	if (!taken)
+		main_reset_map();
+#else
+	(void)taken;
+	free(image);
+#endif
 }
 
 struct data_array *game_state_data_new(
