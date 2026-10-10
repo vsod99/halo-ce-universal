@@ -124,6 +124,10 @@ symbols in this file:
 #include "rasterizer/xbox/rasterizer_xbox_internal.h"
 #include "rasterizer/xbox/rasterizer_xbox_models.h"
 #include "view_fov.h" /* port: port/linux/game/view_fov.c */
+#ifdef HALO_XBOX
+#include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_bitmaps.c */
+#include "cache_file_formats.h" /* port: enum custom_edition_channel_order */
+#endif
 
 /* ---------- constants */
 
@@ -536,6 +540,19 @@ static boolean local_environment_fog_screen_flag = FALSE;
 static boolean local_do_not_change_z_stencil_states = FALSE;
 static boolean local_reported_too_many_transparent_geometry_groups = FALSE;
 static boolean local_pixel_shader_dirty_flag = TRUE;
+#ifdef HALO_XBOX
+/* port: whether the multipurpose map drawn has Halo PC's channel order (a
+Halo Custom Edition map's: aux mask, self-illumination, specular and color
+change in red, green, blue and alpha, where this shader reads specular from
+red, self-illumination from green, color change from blue and the aux mask
+from alpha). The other renderers sample such a texture's channels in this
+shader's order (port/linux/src/xbox_textures.c); the original Xbox's GPU
+cannot, so combiner 0 reads specular from blue and color change from alpha
+instead. The aux mask, which would be red, stays alpha: a combiner's alpha
+inputs read only blue and alpha. */
+static boolean local_multipurpose_map_custom_edition = FALSE;
+static boolean local_multipurpose_map_custom_edition_set = FALSE;
+#endif
 extern boolean rasterizer_model_cortana_hack;
 
 /* ---------- public code */
@@ -912,6 +929,19 @@ static void set_environment_shader_pixel_shader(
 			PS_REGISTER_ONE,
 			PS_REGISTER_ZERO,
 			PS_REGISTER_ZERO);
+#ifdef HALO_XBOX
+		/* port: a Custom Edition multipurpose map's channels (above) */
+		if (local_multipurpose_map_custom_edition)
+		{
+			pixel_shader.constant_0[0] = 0x000000FF;
+			pixel_shader.alpha_inputs[0] = PS_COMBINERINPUTS(
+				PS_REGISTER_T2 | PS_CHANNEL_ALPHA,
+				PS_REGISTER_ONE,
+				PS_REGISTER_ZERO,
+				PS_REGISTER_ZERO);
+		}
+		local_multipurpose_map_custom_edition_set = local_multipurpose_map_custom_edition;
+#endif
 		pixel_shader.alpha_outputs[0] = PS_COMBINEROUTPUTS(
 			PS_REGISTER_R0,
 			PS_REGISTER_DISCARD,
@@ -999,6 +1029,22 @@ static void set_environment_shader_pixel_shader(
 	}
 	else
 	{
+#ifdef HALO_XBOX
+		/* port: a Custom Edition multipurpose map's channels (above), when
+		they change from the last draw's */
+		if (local_multipurpose_map_custom_edition != local_multipurpose_map_custom_edition_set)
+		{
+			pixel_shader.constant_0[0] = local_multipurpose_map_custom_edition ? 0x000000FF : 0x00FF0000;
+			pixel_shader.alpha_inputs[0] = PS_COMBINERINPUTS(
+				PS_REGISTER_T2 | (local_multipurpose_map_custom_edition ? PS_CHANNEL_ALPHA : 0),
+				PS_REGISTER_ONE,
+				PS_REGISTER_ZERO,
+				PS_REGISTER_ZERO);
+			IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_PSCONSTANT0_0, pixel_shader.constant_0[0]);
+			IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_PSALPHAINPUTS0, pixel_shader.alpha_inputs[0]);
+			local_multipurpose_map_custom_edition_set = local_multipurpose_map_custom_edition;
+		}
+#endif
 		IDirect3DDevice8_SetRenderState(
 			global_d3d_device,
 			D3DRS_PSCONSTANT0_1,
@@ -1873,6 +1919,13 @@ void _rasterizer_model_draw(
 					1,
 					shader_model->model.multipurpose_map.index,
 					shader_permutation_index);
+#ifdef HALO_XBOX
+				/* port: its channels' order (local_multipurpose_map_custom_edition) */
+				local_multipurpose_map_custom_edition =
+					custom_edition_bitmap_channel_order(
+						shader_model->model.multipurpose_map.index,
+						shader_permutation_index) == _custom_edition_channels_multipurpose;
+#endif
 				SetTextureStageStateSmart(
 					2, D3DTSS_ADDRESSU, D3DTADDRESS_WRAP);
 				SetTextureStageStateSmart(

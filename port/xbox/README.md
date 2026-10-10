@@ -313,9 +313,13 @@ its medium geometry, when that fits; maps that fit keep their full detail.
 | Coldsnap, Precipice, TSCE | 4.5-11.6 MB | 0-0.6 MB (12-16 MB BSPs) | not listed |
 | bigass v3 | 26.7 MB (12.8) | 4.8 MB | not listed |
 
-The renderer has no texture swizzle, so multipurpose maps and HUD meters are
-drawn in Halo PC's channel order (weapons look tinted, Snow Grove's meters
-are gradients).
+The NV2A has no texture swizzle, so a Custom Edition multipurpose map (Halo
+PC's channel order) is read in its own order by the model shader instead:
+combiner 0 takes specular from blue and color change from alpha
+(`rasterizer_xbox_models.c`); only the auxiliary mask, which would be red,
+stays alpha, as a combiner's alpha inputs read blue and alpha only. HUD
+meters are still drawn in Halo PC's order (Snow Grove's are gradients): the
+meter shader kills by the texture's own alpha, which holds their fill order.
 
 ## Programs
 

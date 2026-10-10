@@ -652,6 +652,30 @@ boolean custom_edition_reordered_bitmaps_find(
 	return TRUE;
 }
 
+short custom_edition_bitmap_channel_order(
+	long tag_index,
+	long sequence_index)
+{
+	struct custom_edition_bitmaps_globals *globals = &custom_edition_bitmaps_globals;
+	long bitmap_count;
+	long reordered_index;
+
+	if (!globals->reordered_bitmap_count || tag_index == NONE || !custom_edition_cache_tags_loaded())
+	{
+		return _custom_edition_channels_xbox;
+	}
+	bitmap_count = bitmap_group_get(tag_index)->bitmaps.count;
+	if (bitmap_count <= 0 || sequence_index < 0)
+	{
+		return _custom_edition_channels_xbox;
+	}
+	reordered_index = reordered_bitmap_index(tag_index, sequence_index % bitmap_count);
+
+	return reordered_index != NONE ?
+		globals->reordered_bitmaps[reordered_index].channel_order :
+		_custom_edition_channels_xbox;
+}
+
 void custom_edition_bitmaps_dispose(
 	void)
 {
