@@ -284,15 +284,18 @@ make room (saved games of earlier Xbox builds no longer load). Sounds
 Custom Edition keeps as Ogg Vorbis are encoded again at load into 2 MB at
 most; the rest are silent.
 
-State (Oct 10): the window is made and checked at start-up, and a map is
-found, opened and read up to its resource maps. Not done yet: a map's model
-and structure geometry is made into vertex buffers in contiguous memory,
-twice (the compressed vertices and the Direct3D buffer's copy), which the
-Xbox does not have room for; the plan is to put the vertices in the window
-between the tags and the lowest structure BSP (13 MB on Death Island) and
-draw from them in place, as the Xbox maps' buffers are. The renderer has
-no texture swizzle, so multipurpose maps and HUD meters are drawn in Halo
-PC's channel order.
+A map's model data is read to the top of the window, free until a
+structure BSP loads, and its geometry goes between the tags and the lowest
+structure BSP, at the Xbox tag cache's own address (which the GPU reads),
+drawn in place from headers of the port's own; a structure BSP's vertices
+follow the models'. A map whose geometry has no room there is refused and
+logged, and the game goes back to its menus.
+
+Tested (Oct 10, xemu, release): Death Island 27 fps, Infinity 27, Yoyorast
+Island 26, Portent 19 run. Hugeass and Extinction are refused (21-23 MB of
+model data), Precipice too (its 16 MB structure BSP leaves 176 KB). The
+renderer has no texture swizzle, so multipurpose maps and HUD meters are
+drawn in Halo PC's channel order (weapons look tinted).
 
 ## Programs
 
