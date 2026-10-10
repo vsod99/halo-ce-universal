@@ -632,6 +632,19 @@ int halo_linux_printf(const char *format, ...)
 static const char *translated(const char *path, char *buffer, size_t size)
 {
 	platform_translate_path(path, buffer, size);
+#ifdef HALO_XBOX
+	/* (the original Xbox's C library opens files with nxdk's CreateFile,
+	which takes backslashes only: port/xbox/src/nxdk_posix.c) */
+	{
+		char *cursor;
+
+		for (cursor = buffer; *cursor; cursor++)
+		{
+			if (*cursor == '/')
+				*cursor = '\\';
+		}
+	}
+#endif
 	return buffer;
 }
 
