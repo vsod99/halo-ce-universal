@@ -666,7 +666,8 @@ static struct voice_packet *stream_playing_packet(struct sdl_stream *stream)
 linearly and sending nothing to the reverb (the windowed sinc's taps and the
 reverb are more than the Xbox's processor has to spare); the cursor is fixed
 point, since converting a double to an integer every sample costs two
-changes of the x87's control word on the Xbox's processor */
+changes of the x87's control word on the Xbox's processor, and the
+interpolation is in integers, leaving one conversion to float per channel */
 static void mix_voice(struct sdl_stream *stream, float *output, float *send, unsigned long frames)
 {
 	DWORD rate;
@@ -690,10 +691,11 @@ static void mix_voice(struct sdl_stream *stream, float *output, float *send, uns
 		stream->current_right = target_right;
 		stream->gains_valid = TRUE;
 	}
-	left = stream->current_left;
-	right = stream->current_right;
-	ramp_left = (target_left - left) / (float)frames;
-	ramp_right = (target_right - right) / (float)frames;
+	/* (the gains take the samples' scale, 1/32768, with them) */
+	left = stream->current_left * (1.0f / 32768.0f);
+	right = stream->current_right * (1.0f / 32768.0f);
+	ramp_left = (target_left * (1.0f / 32768.0f) - left) / (float)frames;
+	ramp_right = (target_right * (1.0f / 32768.0f) - right) / (float)frames;
 	/* a voice that cannot be heard only moves on */
 	silent = left == 0.0f && right == 0.0f && target_left == 0.0f && target_right == 0.0f;
 	last_channel = stream->channels - 1;
@@ -711,24 +713,39 @@ static void mix_voice(struct sdl_stream *stream, float *output, float *send, uns
 		packet_frames = packet->frames;
 		cursor = stream->cursor;
 		cursor_fraction = stream->cursor_fraction;
+		if (silent)
+		{
+			/* (the frames the loop below would step through, to the
+			packet's end or the output's, in one move) */
+			unsigned long long position = ((unsigned long long)cursor << 32) | cursor_fraction;
+			unsigned long long stride = ((unsigned long long)step << 32) | step_fraction;
+			unsigned long long remaining = (((unsigned long long)packet_frames << 32) - position + stride - 1) / stride;
+			unsigned long taken = frames - frame;
+
+			if (remaining < taken)
+				taken = (unsigned long)remaining;
+			position += stride * taken;
+			frame += taken;
+			cursor = (unsigned long)(position >> 32);
+			cursor_fraction = (unsigned int)position;
+		}
 		for (; frame < frames && cursor < packet_frames; frame++)
 		{
-			if (!silent)
-			{
-				const short *a = samples + cursor * stream->channels;
-				/* (the packet's last frame is held, not blended into the next) */
-				const short *b = cursor + 1 < packet_frames ? a + stream->channels : a;
-				/* (24 bits of the fraction, which a float holds exactly) */
-				float fraction = (float)(long)(cursor_fraction >> 8) * (1.0f / 16777216.0f);
-				float a0 = a[0], a1 = a[last_channel];
-				float sample_left = (a0 + ((float)b[0] - a0) * fraction) * (1.0f / 32768.0f);
-				float sample_right = (a1 + ((float)b[last_channel] - a1) * fraction) * (1.0f / 32768.0f);
+			const short *a = samples + cursor * stream->channels;
+			/* (the packet's last frame is held, not blended into the next) */
+			const short *b = cursor + 1 < packet_frames ? a + stream->channels : a;
+			/* (15 bits of the fraction: two samples' difference times it
+			fits a long) */
+			long weight = (long)(cursor_fraction >> 17);
+			float sample_left = (float)(a[0] + (((b[0] - a[0]) * weight) >> 15));
+			/* (a mono voice's mix bins or pan split it across the
+			speakers: its one channel is both) */
+			float sample_right = last_channel ?
+				(float)(a[last_channel] + (((b[last_channel] - a[last_channel]) * weight) >> 15)) :
+				sample_left;
 
-				/* (a mono voice's mix bins or pan split it across the
-				speakers: its one channel is both) */
-				output[frame * 2] += sample_left * left;
-				output[frame * 2 + 1] += sample_right * right;
-			}
+			output[frame * 2] += sample_left * left;
+			output[frame * 2 + 1] += sample_right * right;
 			left += ramp_left;
 			right += ramp_right;
 			cursor_fraction += step_fraction;
