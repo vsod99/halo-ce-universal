@@ -742,6 +742,12 @@ static void mix_voice(struct sdl_stream *stream, float *output, float *send, uns
 }
 
 #else
+static float packet_sample(const struct voice_packet *packet, unsigned long frame, unsigned long channel,
+	unsigned long channels)
+{
+	return packet->samples[frame * channels + channel] * (1.0f / 32768.0f);
+}
+
 /* the voice's next frame, finishing the packets it passes; FALSE once they
 run out */
 static BOOL take_frame(struct sdl_stream *stream, float *frame)
