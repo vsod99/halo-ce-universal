@@ -6,6 +6,7 @@
     python tools/ci_build.py android release
     python tools/ci_build.py linux profile
     python tools/ci_build.py web release
+    python tools/ci_build.py xbox debug
 
 Builds are portable (any x86-64 processor), so they run on other
 computers. Debug builds skip link-time and profile-guided optimisation,
@@ -38,6 +39,9 @@ OUTPUTS = {
     # zlib license, as the release carries the other libraries')
     "linux": ["build/linux/halo", "build/linux/libSDL3.so.0", "build/linux/SDL3-LICENSE.txt"],
     "windows": ["build/windows/halo.exe", "build/windows/SDL3.dll"],
+    # the original Xbox's program (port/xbox), its maps from the player's
+    # own disc (the workflow's xbox job brings nxdk)
+    "xbox": ["build/xbox/halo/bin/default.xbe"],
     "android": [],  # the APK, below
     "web": [],  # the site, below
 }
