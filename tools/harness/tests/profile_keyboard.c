@@ -20,6 +20,8 @@ static struct { boolean active, shift_active, caps_active, symbols_active;
     wchar_t *text_buffer, *cursor; unsigned long time_of_last_event;
     long caret_bitmap_index; wchar_t saved_text[MAXIMUM_VIRTUAL_KEYBOARD_SAVED_TEXT_LENGTH];
 } virtual_keyboard_globals;
+/* (a menu text field's caption: none, a saved game's name is typed) */
+static wchar_t const *virtual_keyboard_text_caption;
 static boolean unique = TRUE, clean = TRUE, keyboard_available = TRUE;
 static int processed, errors;
 #define VIRTUAL_KEYBOARD_TAG 1
