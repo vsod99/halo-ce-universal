@@ -68,13 +68,39 @@ void xbox_gpu_screen(unsigned long *width, unsigned long *height, unsigned long 
 volatile unsigned long *xbox_gpu_reports(void);
 /* the physical address of the buffer the next frame is drawn into */
 unsigned long xbox_gpu_back_buffer(void);
-/* room for that many words of methods at the returned address; the end
-of what was written goes to xbox_gpu_end, which sends it to the GPU */
-unsigned long *xbox_gpu_begin(unsigned long dwords);
-void xbox_gpu_end(unsigned long *end);
+/* the end of what was written, how far one may write without a look at the
+GPU, and where the GPU is told of it next (nxdk_nv2a.c); the device writes
+a block of methods for each render state, so the usual case is inline */
+struct xbox_gpu_push
+{
+	unsigned long *write_end;
+	unsigned long *room_end;
+	unsigned long *kick_end;
+};
+extern struct xbox_gpu_push xbox_gpu_push;
+unsigned long *xbox_gpu_begin_room(unsigned long dwords);
 /* the GPU told of everything written (xbox_gpu_end does so only now and
 then), before polling for what it writes back */
 void xbox_gpu_kick(void);
+
+/* room for that many words of methods (at least one) at the returned
+address; the end of what was written goes to xbox_gpu_end, which sends it
+to the GPU */
+static __inline__ unsigned long *xbox_gpu_begin(unsigned long dwords)
+{
+	unsigned long *p = xbox_gpu_push.write_end;
+
+	if (p + dwords <= xbox_gpu_push.room_end)
+		return p;
+	return xbox_gpu_begin_room(dwords);
+}
+
+static __inline__ void xbox_gpu_end(unsigned long *end)
+{
+	xbox_gpu_push.write_end = end;
+	if (end >= xbox_gpu_push.kick_end)
+		xbox_gpu_kick();
+}
 int xbox_gpu_busy(void);
 void xbox_gpu_wait_idle(void);
 /* the count the GPU last wrote at XBOX_GPU_FENCE_OFFSET, and a wait,
