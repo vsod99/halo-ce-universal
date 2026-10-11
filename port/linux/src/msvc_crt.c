@@ -31,12 +31,20 @@ size_t malloc_usable_size(void *pointer);
 
 /* ---------- strings */
 
+/* tolower in the C locale, which every port runs in, inline: the game
+compares names (models' markers among them) many times a frame, and the
+original Xbox's C library's tolower is a call through its locale's table */
+static __inline__ int ascii_tolower(int c)
+{
+	return (unsigned)(c - 'A') < 26u ? c + ('a' - 'A') : c;
+}
+
 int _stricmp(const char *string1, const char *string2)
 {
 	for (;; string1++, string2++)
 	{
-		int c1 = tolower((unsigned char)*string1);
-		int c2 = tolower((unsigned char)*string2);
+		int c1 = ascii_tolower((unsigned char)*string1);
+		int c2 = ascii_tolower((unsigned char)*string2);
 
 		if (c1 != c2 || !c1)
 			return c1 - c2;
@@ -47,8 +55,8 @@ int _strnicmp(const char *string1, const char *string2, size_t count)
 {
 	for (; count; count--, string1++, string2++)
 	{
-		int c1 = tolower((unsigned char)*string1);
-		int c2 = tolower((unsigned char)*string2);
+		int c1 = ascii_tolower((unsigned char)*string1);
+		int c2 = ascii_tolower((unsigned char)*string2);
 
 		if (c1 != c2 || !c1)
 			return c1 - c2;
@@ -71,7 +79,7 @@ char *_strlwr(char *string)
 	char *cursor;
 
 	for (cursor = string; *cursor; cursor++)
-		*cursor = (char)tolower((unsigned char)*cursor);
+		*cursor = (char)ascii_tolower((unsigned char)*cursor);
 	return string;
 }
 
