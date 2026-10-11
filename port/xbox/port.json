@@ -14,6 +14,7 @@
     "port/linux/src/p2p_lobby.c",
     "port/linux/src/p2p_sanitize.c",
     "port/linux/src/p2p_signal.c",
+    "port/linux/src/p2p_webrtc.c",
     "port/linux/src/png_decode.c",
     "port/linux/src/port_config.c",
     "port/linux/src/xbdm.c",
