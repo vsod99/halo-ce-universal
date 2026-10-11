@@ -38,6 +38,7 @@ program that hangs is stopped at the timeout.
 
 import argparse
 import base64
+import binascii
 import json
 import os
 import re
@@ -583,8 +584,13 @@ class Sampler:
                 self.receive()
                 self.samples.append(self.stack())
                 self.send("c")
-            # (detached without waiting for its answer: the machine runs on)
+            # (detached from a stopped machine, which the stub then lets run
+            # on: a detach sent while it runs was never taken, and left it
+            # stopped once the connection closed)
+            self.connection.sendall(b"\x03")
+            self.receive()
             self.send("D")
+            self.receive()
             self.connection.close()
         except (OSError, ConnectionError, ValueError) as error:
             print(f"(profile: {error})", flush=True)
@@ -1132,7 +1138,11 @@ class LogScreenshots:
         if self.header is None:
             return False
         if line.startswith("~"):
-            self.rows.append(base64.b64decode(line[1:]))
+            # (a row garbled on the serial line leaves the frame short: not saved)
+            try:
+                self.rows.append(base64.b64decode(line[1:]))
+            except binascii.Error:
+                pass
             return True
         if line == "screenshot end":
             frame, width, height = self.header
@@ -1264,7 +1274,8 @@ def main() -> None:
     run_parser.add_argument("--input", action="append", default=[], metavar="SECONDS:BUTTON,...",
                             help="press buttons from inside the game (debug.test_input \"press:\"), timed from "
                                  "its first controller read; needs no access to the Mac's screen; rup, rdown, "
-                                 "rleft and rright turn the view; BUTTON*SECONDS holds it that long; repeatable")
+                                 "rleft and rright turn the view, ls and rs click the sticks; BUTTON*SECONDS "
+                                 "holds it that long; repeatable")
     run_parser.add_argument("--frames", type=int, default=0, metavar="N",
                             help="the game writes every Nth frame to the log, saved as frame-N.png "
                                  "(debug.screenshot_every), and the targets besides the screen it drew into "
