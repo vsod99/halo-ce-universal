@@ -176,6 +176,11 @@ struct custom_edition_bitmaps_globals
 /* ---------- globals */
 
 static struct custom_edition_bitmaps_globals custom_edition_bitmaps_globals;
+/* the size above which the map's textures are made smaller, 0 until the
+texture cache runs out of room (custom_edition_texture_cache_full), and when
+it last changed */
+static long custom_edition_texture_limit = 0;
+static unsigned long custom_edition_texture_limit_time = 0;
 
 /* ---------- private code */
 
@@ -690,10 +695,352 @@ void custom_edition_bitmaps_dispose(
 	globals->reordered_bitmaps = NULL;
 	globals->reordered_bitmap_count = 0;
 	globals->reordered_bitmap_capacity = 0;
+	custom_edition_texture_limit = 0;
 	/* the pixels it was told of are the texture cache's to reuse */
 	halo_custom_edition_texels_forget();
 
 	return;
+}
+
+/* ---------- the hardware's layout, made in place
+
+rasterizer_xbox_bitmap_rebuild_hardware_format takes a copy of the whole
+bitmap from the heap, and its swizzle a copy of each level besides: nearly
+twice a large texture's size (9.6 MB for 1024x1024 at 32 bits with its
+levels), which the original Xbox's heap does not have while a map plays, and
+such a texture was drawn from its pixels unswizzled. A 2D bitmap's levels
+are where the hardware wants them already, so it is made in place: each
+level swizzled where it is (the texels moved along the cycles of the swizzle,
+a bit for each texel to know those moved), linear rows spread to their
+padded pitch from the last, and the padding cleared. Cube maps and 3D
+bitmaps are small, and keep the copies. */
+
+/* the bits of value placed at the bits of mask, low to high */
+static unsigned long swizzle_deposit(
+	unsigned long value,
+	unsigned long mask)
+{
+	unsigned long result = 0;
+	unsigned long bit;
+
+	for (bit = 1; mask; bit <<= 1)
+	{
+		unsigned long lowest = mask & (0 - mask);
+
+		if (value & bit)
+		{
+			result |= lowest;
+		}
+		mask &= ~lowest;
+	}
+
+	return result;
+}
+
+/* rasterizer_swizzle.c's compute_swizzle_masks for a 2D level */
+static void swizzle_masks(
+	long width,
+	long height,
+	unsigned long *x_mask,
+	unsigned long *y_mask)
+{
+	unsigned long size = 1;
+	unsigned long bit = 1;
+	boolean advanced;
+
+	*x_mask = 0;
+	*y_mask = 0;
+	do
+	{
+		advanced = FALSE;
+		if (size < (unsigned long)width)
+		{
+			*x_mask |= bit;
+			bit <<= 1;
+			advanced = TRUE;
+		}
+		if (size < (unsigned long)height)
+		{
+			*y_mask |= bit;
+			bit <<= 1;
+			advanced = TRUE;
+		}
+		size <<= 1;
+	}
+	while (advanced);
+
+	return;
+}
+
+#define SWIZZLE_CYCLES(type) \
+	for (start = 0; start < count; start++) \
+	{ \
+		type moving; \
+		unsigned long index = start; \
+		\
+		if (moved[start >> 3] & (1 << (start & 7))) \
+		{ \
+			continue; \
+		} \
+		moving = ((type *)pixels)[start]; \
+		do \
+		{ \
+			unsigned long next = x_offsets[index & (width - 1)] | y_offsets[index >> width_log2]; \
+			type held = ((type *)pixels)[next]; \
+			\
+			((type *)pixels)[next] = moving; \
+			moving = held; \
+			moved[next >> 3] |= (byte)(1 << (next & 7)); \
+			index = next; \
+		} \
+		while (index != start); \
+	}
+
+/* a level of width x height texels (powers of two) of bytes each, swizzled
+where it is; x_offsets and y_offsets have room for its width and height,
+moved for a bit a texel */
+static void swizzle_level_in_place(
+	void *pixels,
+	long width,
+	long height,
+	short bytes,
+	unsigned long *x_offsets,
+	unsigned long *y_offsets,
+	byte *moved)
+{
+	unsigned long count = (unsigned long)width * (unsigned long)height;
+	unsigned long x_mask, y_mask;
+	unsigned long start;
+	long width_log2 = 0;
+	long index;
+
+	swizzle_masks(width, height, &x_mask, &y_mask);
+	while ((1L << width_log2) < width)
+	{
+		width_log2++;
+	}
+	for (index = 0; index < width; index++)
+	{
+		x_offsets[index] = swizzle_deposit((unsigned long)index, x_mask);
+	}
+	for (index = 0; index < height; index++)
+	{
+		y_offsets[index] = swizzle_deposit((unsigned long)index, y_mask);
+	}
+	memset(moved, 0, (count + 7) / 8);
+	switch (bytes)
+	{
+	case 1:
+		SWIZZLE_CYCLES(byte);
+		break;
+	case 2:
+		SWIZZLE_CYCLES(uint16_t);
+		break;
+	case 4:
+		SWIZZLE_CYCLES(uint32_t);
+		break;
+	}
+
+	return;
+}
+
+#undef SWIZZLE_CYCLES
+
+/* rasterizer_xbox_bitmap_rebuild_hardware_format's result for a 2D bitmap,
+made in place; FALSE if it is not a 2D one, or its bits do not fit the heap
+either (the texture cache's memory for it holds the hardware's size) */
+static boolean bitmap_rebuild_in_place(
+	struct bitmap_data *bitmap)
+{
+	byte *base = bitmap->base_address;
+	unsigned long size;
+	unsigned long offset = 0;
+	short maximum_mipmap_index;
+	short mipmap_index;
+
+	if (bitmap->type != _bitmap_type_2d)
+	{
+		return FALSE;
+	}
+	size = (unsigned long)rasterizer_xbox_bitmap_get_pixel_data_size(bitmap);
+	maximum_mipmap_index = rasterizer_xbox_bitmap_get_max_mipmap_count(bitmap);
+	if (TEST_FLAG(bitmap->flags, _bitmap_linear_bit))
+	{
+		/* one level, its rows padded to 64 bytes: each moved up from the
+		last, as none is moved over one not yet moved */
+		long row_pitch = bitmap_mipmap_get_row_pitch(bitmap, 0);
+		long padded_pitch = row_pitch + (-row_pitch & 63);
+		short y;
+
+		for (y = (short)(bitmap->height - 1); y >= 0; y--)
+		{
+			memmove(base + y * padded_pitch, base + y * row_pitch, (size_t)row_pitch);
+			memset(base + y * padded_pitch + row_pitch, 0, (size_t)(padded_pitch - row_pitch));
+		}
+		offset = (unsigned long)(padded_pitch * bitmap->height);
+	}
+	else
+	{
+		if (!TEST_FLAG(bitmap->flags, _bitmap_compressed_bit))
+		{
+			short bytes = bitmap_format_get_bits_per_pixel(bitmap->format) / 8;
+			unsigned long *offsets = malloc(((size_t)bitmap->width + (size_t)bitmap->height) * sizeof(*offsets));
+			byte *moved = malloc(((size_t)bitmap->width * (size_t)bitmap->height + 7) / 8);
+
+			if (!offsets || !moved || (bytes != 1 && bytes != 2 && bytes != 4))
+			{
+				free(offsets);
+				free(moved);
+				return FALSE;
+			}
+			for (mipmap_index = 0; mipmap_index <= maximum_mipmap_index; mipmap_index++)
+			{
+				long width = bitmap_mipmap_get_width(bitmap, mipmap_index);
+
+				swizzle_level_in_place(bitmap_mipmap_address(bitmap, mipmap_index), width,
+					bitmap_mipmap_get_height(bitmap, mipmap_index), bytes, offsets, offsets + width, moved);
+			}
+			free(offsets);
+			free(moved);
+			SET_FLAG(bitmap->flags, _bitmap_swizzled_bit, TRUE);
+		}
+		/* the levels one after another, as the tag has them */
+		for (mipmap_index = 0; mipmap_index <= maximum_mipmap_index; mipmap_index++)
+		{
+			byte *source = bitmap_mipmap_address(bitmap, mipmap_index);
+			unsigned long mipmap_size = (unsigned long)bitmap_mipmap_get_pixel_data_size(bitmap, mipmap_index);
+
+			if (source != base + offset)
+			{
+				memmove(base + offset, source, mipmap_size);
+			}
+			offset += mipmap_size;
+		}
+	}
+	memset(base + offset, 0, (size_t)(-offset & 127));
+	offset += -offset & 127;
+	assert(offset == size);
+
+	return TRUE;
+}
+
+/* ---------- textures made smaller
+
+The texture cache holds what a view draws; on the original Xbox it is
+22 MB, less what a map's models' geometry is lent (custom_edition_geometry.c),
+and Custom Edition maps made for Halo PC can draw more than that at once
+(TSCE_MultiplayerV1's beach: about 40 MB of textures, its sky's four sheets
+8 MB of them; bigass_v3's first-person rifle a 5.4 MB texture). A texture
+the cache has no room for is drawn as the default checkerboard, as the
+Xbox's own maps never needed, and the cache drops and reads again the
+textures it does hold, frame after frame.
+
+Instead, a 2D texture of such a map can be made its next level down, as the
+tag holds its levels one after another: its pixels start after its first
+level, and it is half as wide and high, for as long as the map is loaded
+(the tag is read again when it loads next). The texture the cache has no
+room for is made smaller at once, a level each time, down to 256 pixels; and
+once the cache has run out of room, the map's textures larger than a limit
+are made smaller as they load, and those already loaded go when next drawn
+(once the GPU is done with them), to load again smaller. The limit starts
+at a sixteenth of the cache, and halves (down to 128 KB, at most every two
+seconds) each time the cache runs out of room again: it holds only textures
+drawn in the last two frames, so the view draws more than it holds.
+Interface bitmaps and sprites, whose sizes in pixels the game uses, keep
+theirs. */
+
+int config_boolean(char const *name);
+
+enum
+{
+	/* bitmaps.c's bitmap group types: its first, the 2D textures */
+	_bitmap_group_type_2d_textures = 0,
+	REDUCED_BITMAP_MINIMUM_SIZE = 256,
+	CROWDED_TEXTURE_LIMIT_FIRST = HALO_PORT_TEXTURE_CACHE_SIZE / 16,
+	CROWDED_TEXTURE_LIMIT_LAST = 0x20000,
+	CROWDED_TEXTURE_LIMIT_INTERVAL = 2000,
+};
+
+/* whether the bitmap can be made its next level down */
+static boolean bitmap_reducible(
+	struct bitmap_data *bitmap)
+{
+	return custom_edition_cache_tags_loaded() &&
+		bitmap->type == _bitmap_type_2d &&
+		!TEST_FLAG(bitmap->flags, _bitmap_linear_bit) &&
+		TEST_FLAG(bitmap->flags, _bitmap_has_power_of_two_dimensions_bit) &&
+		bitmap->mipmap_count >= 1 &&
+		MAX(bitmap->width, bitmap->height) > REDUCED_BITMAP_MINIMUM_SIZE &&
+		MIN(bitmap->width, bitmap->height) >= 8 &&
+		bitmap_mipmap_get_pixel_data_size(bitmap, 0) < bitmap->pixels_size &&
+		bitmap_group_get(bitmap->tag_index)->type == _bitmap_group_type_2d_textures &&
+		config_boolean("game.custom_edition_reduce_detail");
+}
+
+boolean custom_edition_bitmap_reduce(
+	struct bitmap_data *bitmap)
+{
+	long first_level_size;
+
+	if (!bitmap_reducible(bitmap))
+	{
+		return FALSE;
+	}
+	first_level_size = bitmap_mipmap_get_pixel_data_size(bitmap, 0);
+	bitmap->pixels_offset += first_level_size;
+	bitmap->pixels_size -= first_level_size;
+	bitmap->width >>= 1;
+	bitmap->height >>= 1;
+	bitmap->mipmap_count--;
+	error(
+		_error_silent,
+		"custom edition: '%s' is drawn at %dx%d: the texture cache has no room for it larger",
+		tag_get_name(bitmap->tag_index),
+		bitmap->width,
+		bitmap->height);
+
+	return TRUE;
+}
+
+void custom_edition_texture_cache_full(
+	void)
+{
+	unsigned long now = system_milliseconds();
+	long limit = custom_edition_texture_limit;
+
+	if (!custom_edition_cache_tags_loaded())
+	{
+		return;
+	}
+	if (!limit)
+	{
+		limit = CROWDED_TEXTURE_LIMIT_FIRST;
+	}
+	else if (limit > CROWDED_TEXTURE_LIMIT_LAST &&
+		now - custom_edition_texture_limit_time >= CROWDED_TEXTURE_LIMIT_INTERVAL)
+	{
+		limit = MAX(limit / 2, CROWDED_TEXTURE_LIMIT_LAST);
+	}
+	if (limit != custom_edition_texture_limit)
+	{
+		custom_edition_texture_limit = limit;
+		custom_edition_texture_limit_time = now;
+		error(
+			_error_silent,
+			"custom edition: the texture cache ran out of room: textures larger than %ld KB are drawn smaller",
+			limit / 1024);
+	}
+
+	return;
+}
+
+boolean custom_edition_bitmap_oversized(
+	struct bitmap_data *bitmap,
+	long size)
+{
+	return custom_edition_texture_limit &&
+		size > custom_edition_texture_limit &&
+		bitmap_reducible(bitmap);
 }
 
 void custom_edition_bitmap_pixels_arrived(
@@ -733,7 +1080,10 @@ void custom_edition_bitmap_pixels_arrived(
 					custom_edition_bitmaps_globals.reordered_bitmaps[reordered_index].channel_order :
 					_custom_edition_channels_xbox);
 			/* on failure it logs, and the texture shows the pixels as read */
-			rasterizer_xbox_bitmap_rebuild_hardware_format(bitmap);
+			if (!bitmap_rebuild_in_place(bitmap))
+			{
+				rasterizer_xbox_bitmap_rebuild_hardware_format(bitmap);
+			}
 			return;
 		}
 	}

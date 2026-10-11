@@ -380,6 +380,24 @@ vertices and strip lie in the map in its tag's empty blocks, and each
 geometry its block in its tag's padding, so the cache costs the heap
 nothing per part. The log has a line on the cache every 900 frames.
 
+Textures load into the Xbox's 22 MB texture cache (less the 4 MB it may
+lend), and a Custom Edition map made for Halo PC can draw more than that
+in one view (TSCE's beach about 40 MB). A texture the cache has no room for
+is drawn as the game's default checkerboard, red and green. With
+`game.custom_edition_reduce_detail`, such a texture is made its next level
+down instead (`custom_edition_bitmap_reduce`: its pixels start after its
+first level, half as wide and high, for as long as the map is loaded, down
+to 256 pixels), and once the cache has run out of room the map's textures
+larger than a limit are made smaller as they load (those already loaded go
+when next drawn, once the GPU is done with them, to load again smaller).
+The limit starts at a sixteenth of the cache, 1408 KB, and halves, down to
+128 KB, each time the cache runs out of room again (at most every two
+seconds). debug.txt names each texture made smaller. Interface bitmaps and
+sprites keep their sizes, which the game uses in pixels. A texture's levels
+are swizzled where they lie as they arrive (`bitmap_rebuild_in_place`), as
+the game's own conversion takes a copy of the whole texture from the heap,
+and each level's besides, which the heap has not for a large one.
+
 A map is measured from a few reads of its file before a game starts for it
 (`custom_edition_cache_measure`; the resource maps' tags measured from their
 indexes when an allowance for them leaves no room): one whose tags would
@@ -395,8 +413,8 @@ enough yet (`xbox_unsupported_maps` in `custom_edition_cache.c`).
 | cmt Snow Grove | 10.5 MB | 10.9 MB | 27 fps |
 | Hugeass | 11.3 MB (5.2 at medium) | 7.2 MB | 25-30 fps, medium detail |
 | Extinction | 10.4 MB (6.9) | 5.3 MB | 30 fps, read when drawn (cache beside the tags) |
-| TSCE | 11.6 MB (9.0) | 0.1 MB (15 MB BSPs) | about 20 fps, read when drawn (cache lent); large textures garbled |
-| bigass v3 | 26.7 MB (12.8) | 5.5 MB | 10-22 fps, read when drawn; large textures garbled |
+| TSCE | 11.6 MB (9.0) | 0.1 MB (15 MB BSPs) | 26-29 fps, read when drawn (cache lent); about 85 textures drawn smaller |
+| bigass v3 | 26.7 MB (12.8) | 5.5 MB | 18-20 fps, read when drawn; 120-155 textures drawn smaller |
 | Coldsnap | 8.4 MB (6.3) | 1.2 MB (12.5 MB BSPs) | runs, under 3 fps: its scripts take the processor (trigger volume tests every tick) |
 | Precipice | 4.5 MB (2.6) | 0.2 MB (16 MB BSP) | not listed: its textures thrash the texture cache (3-4 fps) |
 

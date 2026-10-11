@@ -266,6 +266,22 @@ void custom_edition_bitmap_pixels_arrived(
 	long offset,
 	void *pixels);
 
+/* Textures made smaller for the texture cache (custom_edition_bitmaps.c).
+custom_edition_bitmap_reduce: when `bitmap` is a Custom Edition map's 2D
+texture larger than 256 pixels and game.custom_edition_reduce_detail allows
+it, makes it its next level down (half its width and height) for the rest of
+the map and returns TRUE; else FALSE. custom_edition_texture_cache_full: the
+cache had no room for a texture. custom_edition_bitmap_oversized: whether,
+since then, `bitmap` (of `size` bytes in the cache) is to be made smaller. */
+struct bitmap_data;
+boolean custom_edition_bitmap_reduce(
+	struct bitmap_data *bitmap);
+void custom_edition_texture_cache_full(
+	void);
+boolean custom_edition_bitmap_oversized(
+	struct bitmap_data *bitmap,
+	long size);
+
 /* ---------- prototypes/CUSTOM_EDITION_SCRIPTS.C */
 
 /* Gives every function call and engine global reference of the scripts of

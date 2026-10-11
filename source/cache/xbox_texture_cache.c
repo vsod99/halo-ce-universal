@@ -868,9 +868,28 @@ static boolean texture_cache_start_loading_bitmap(
 	size = rasterizer_xbox_bitmap_get_pixel_data_size(bitmap);
 
 	size = MAX(size, bitmap->pixels_size);
+	/* port: a Custom Edition map's texture too large for a cache that has
+	run out of room is made smaller (port/linux/game/custom_edition_bitmaps.c) */
+	while (custom_edition_bitmap_oversized(bitmap, size) && custom_edition_bitmap_reduce(bitmap))
+	{
+		size = MAX(rasterizer_xbox_bitmap_get_pixel_data_size(bitmap), bitmap->pixels_size);
+	}
 	cache_block_index = lruv_block_new(
 		xbox_texture_cache_globals.cache,
 		size);
+	/* port: and one the cache has no room for is made a level smaller and
+	tried again */
+	if (cache_block_index == NONE)
+	{
+		custom_edition_texture_cache_full();
+		if (custom_edition_bitmap_reduce(bitmap))
+		{
+			size = MAX(rasterizer_xbox_bitmap_get_pixel_data_size(bitmap), bitmap->pixels_size);
+			cache_block_index = lruv_block_new(
+				xbox_texture_cache_globals.cache,
+				size);
+		}
+	}
 	if (cache_block_index != NONE)
 	{
 		long new_texture_index;
@@ -1065,6 +1084,18 @@ void *_texture_cache_bitmap_get_hardware_format(
 			if (!cached_texture || cached_texture->bitmap != bitmap)
 			{
 				bitmap->cache_block_index = NONE;
+			}
+			/* port: a Custom Edition map's texture too large for a cache
+			that has run out of room goes, once the GPU is done with it, to
+			load again smaller (port/linux/game/custom_edition_bitmaps.c) */
+			else if (load &&
+				cached_texture->loaded &&
+				custom_edition_bitmap_oversized(bitmap, rasterizer_xbox_bitmap_get_pixel_data_size(bitmap)) &&
+				!IDirect3DBaseTexture8_IsBusy(&cached_texture->hardware_format))
+			{
+				lruv_block_delete(
+					xbox_texture_cache_globals.cache,
+					bitmap->cache_block_index);
 			}
 		}
 		if (bitmap->cache_block_index == NONE && load)
