@@ -284,3 +284,17 @@ void text_hires_register_atlas(const unsigned long *texture, unsigned long width
 	(void)width;
 	(void)height;
 }
+
+void text_hires_set_reset_hook(void (*hook)(void))
+{
+	(void)hook;
+}
+
+/* ---------- the renderer's texture write tracking (port/linux/src/memory_watch.c):
+none, as the Xbox's GPU reads the textures where the game writes them */
+
+void memory_watch_prepare_write(void *address, unsigned long size)
+{
+	(void)address;
+	(void)size;
+}
