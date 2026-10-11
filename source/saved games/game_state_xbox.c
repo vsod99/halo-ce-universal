@@ -348,6 +348,15 @@ boolean game_state_read_from_file(
 	return result;
 }
 
+/* port: the original Xbox writes its cores beside its saved games, on the
+hard disk (port/linux/src/xbox_files.c), its D: being the disc
+(port/xbox/src/xbox_demo.c saves one) */
+#ifdef HALO_XBOX
+#define CORE_FOLDER "z:\\core"
+#else
+#define CORE_FOLDER "d:\\core"
+#endif
+
 boolean game_state_write_core(
 	const char *name,
 	void *buffer,
@@ -358,8 +367,8 @@ boolean game_state_write_core(
 	unsigned long bytes_written;
 	boolean result = FALSE;
 
-	CreateDirectoryA("d:\\core", NULL);
-	sprintf(path, "d:\\core\\%s", name);
+	CreateDirectoryA(CORE_FOLDER, NULL);
+	sprintf(path, CORE_FOLDER "\\%s", name);
 	file = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
 		NULL);
 	if (file != INVALID_HANDLE_VALUE)
@@ -385,7 +394,7 @@ boolean game_state_read_core_header(
 	unsigned long bytes_read;
 	boolean result = FALSE;
 
-	sprintf(path, "d:\\core\\%s", name);
+	sprintf(path, CORE_FOLDER "\\%s", name);
 	file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
 		NULL);
 	if (file != INVALID_HANDLE_VALUE)
@@ -414,7 +423,7 @@ void game_state_read_core(
 	void *image = game_state_image_new(buffer_size);
 	boolean taken;
 
-	sprintf(path, "d:\\core\\%s", name);
+	sprintf(path, CORE_FOLDER "\\%s", name);
 	file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
 		NULL);
 	/* port: read where it is checked, and taken once checked */

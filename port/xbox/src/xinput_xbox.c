@@ -14,12 +14,15 @@ each held 0.12 s (BUTTON*SECONDS: that long) and those of one time 0.52 s
 apart (as
 `tools/xbox_dev.py run --input` does it, which needs no access to the
 Mac's screen); the desktop ports' "bot" and "look" scripts are not here.
+The first controller's state then goes through a demo's recording or
+playing (xbox_demo.c).
 */
 
 #include "platform.h"
 #include "halo_keyboard.h"
 #include "nxdk_platform.h"
 #include "port_config.h"
+#include "xbox_demo.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -146,6 +149,8 @@ static int test_press_parse_button(const char *name, size_t length, struct test_
 		{ "right", XINPUT_GAMEPAD_DPAD_RIGHT, -1, 0, 0 },
 		{ "start", XINPUT_GAMEPAD_START, -1, 0, 0 },
 		{ "back", XINPUT_GAMEPAD_BACK, -1, 0, 0 },
+		{ "ls", XINPUT_GAMEPAD_LEFT_THUMB, -1, 0, 0 },
+		{ "rs", XINPUT_GAMEPAD_RIGHT_THUMB, -1, 0, 0 },
 		{ "lup", 0, -1, 0, 32767 },
 		{ "ldown", 0, -1, 0, -32767 },
 		{ "lleft", 0, -1, -32767, 0 },
@@ -271,6 +276,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		XINPUT_GAMEPAD before = state->Gamepad;
 
 		test_press_apply(&state->Gamepad);
+		xbox_demo_gamepad(&state->Gamepad);
 		/* (a changed report is a new packet, as the hardware's) */
 		if (memcmp(&before, &state->Gamepad, sizeof(before)))
 			reports += 0x10000;
