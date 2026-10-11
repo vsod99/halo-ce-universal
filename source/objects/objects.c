@@ -284,7 +284,31 @@ void *object_get_and_verify_type(
 	long object_index,
 	unsigned long valid_type_flags)
 {
-	struct object_datum *result = object_header_get(object_index)->datum;
+	struct object_datum *result;
+
+#ifdef HALO_RELEASE
+	/* port: the objects' header found here as datum_get finds it, without
+	the call (a release build's most called lookup: a tenth of a busy
+	co-op host's time went to it); anything datum_get would refuse, or of
+	another type, goes the whole way, to be refused or noted there */
+	{
+		short absolute_index = (short)object_index;
+		short identifier = (short)(object_index >> 16);
+		struct object_header_datum *header;
+
+		if (absolute_index >= 0 && absolute_index < object_header_data->count)
+		{
+			header = (struct object_header_datum *)((byte *)object_header_data->data +
+				object_header_data->size * absolute_index);
+			if (header->identifier && (!identifier || identifier == header->identifier) &&
+				TEST_FLAG(valid_type_flags, header->datum->object.type))
+			{
+				return header->datum;
+			}
+		}
+	}
+#endif
+	result = object_header_get(object_index)->datum;
 
 	match_vassert(
 		"c:\\halo\\SOURCE\\objects\\objects.c",
