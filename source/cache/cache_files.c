@@ -1486,7 +1486,32 @@ void *tag_get(
 	char expected_group[16];
 	char returned_group[16];
 
-	struct cache_file_tag_instance *tag_instance = cache_get_tag_instance(tag_index);
+	struct cache_file_tag_instance *tag_instance;
+
+#ifdef HALO_RELEASE
+	/* port: a tag found here as cache_get_tag_instance finds it, without
+	the call or the assertions' checks (a release build calls tag_get from
+	everywhere, a twentieth of its time); anything they would refuse or
+	note goes the whole way */
+	{
+		short absolute_index = (short)tag_index;
+
+		if (cache_file_globals.tags_loaded && global_tag_instances &&
+			absolute_index >= 0 && absolute_index < global_tag_count)
+		{
+			tag_instance = &global_tag_instances[absolute_index];
+			if ((!(tag_index & 0xFFFF0000) || tag_instance->tag_index == tag_index) &&
+				(tag_instance->group_tag == group_tag ||
+					tag_instance->parent_group_tags[0] == group_tag ||
+					tag_instance->parent_group_tags[1] == group_tag) &&
+				tag_instance->base_address)
+			{
+				return tag_instance->base_address;
+			}
+		}
+	}
+#endif
+	tag_instance = cache_get_tag_instance(tag_index);
 	match_vassert(
 		"c:\\halo\\SOURCE\\cache\\cache_files.c",
 		298,
