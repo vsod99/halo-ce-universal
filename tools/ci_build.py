@@ -40,8 +40,9 @@ OUTPUTS = {
     "linux": ["build/linux/halo", "build/linux/libSDL3.so.0", "build/linux/SDL3-LICENSE.txt"],
     "windows": ["build/windows/halo.exe", "build/windows/SDL3.dll"],
     # the original Xbox's program (port/xbox), its maps from the player's
-    # own disc (the workflow's xbox job brings nxdk)
-    "xbox": ["build/xbox/halo/bin/default.xbe"],
+    # own disc (the workflow's xbox job brings nxdk), and internet play's
+    # brokers, which it reads beside itself
+    "xbox": ["build/xbox/halo/bin/default.xbe", "build/xbox/halo/bin/brokers.txt"],
     "android": [],  # the APK, below
     "web": [],  # the site, below
 }
