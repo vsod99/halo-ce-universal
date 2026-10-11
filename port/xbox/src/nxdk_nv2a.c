@@ -125,6 +125,11 @@ static void wait_end(unsigned long long start)
 	waited += __builtin_ia32_rdtsc() - start;
 }
 
+unsigned long long xbox_gpu_waited_cycles(void)
+{
+	return waited;
+}
+
 unsigned long xbox_gpu_waited_percent(void)
 {
 	static unsigned long long last_time, last_waited;

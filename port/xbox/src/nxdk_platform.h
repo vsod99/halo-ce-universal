@@ -125,5 +125,8 @@ unsigned long xbox_gpu_vertical_blank_count(void);
 /* the share of the time since the last call the processor spent waiting on
 the GPU (for the push buffer's room, a fence, a free buffer to flip to) */
 unsigned long xbox_gpu_waited_percent(void);
+/* all the time the processor has waited on the GPU, in time stamp counter
+cycles */
+unsigned long long xbox_gpu_waited_cycles(void);
 
 #endif /* __HALO_XBOX_NXDK_PLATFORM_H */

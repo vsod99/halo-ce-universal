@@ -26,6 +26,7 @@ played means the game went another way, and the log says so.
 */
 
 #include "platform.h"
+#include "nxdk_platform.h"
 #include "port_config.h"
 #include "xbox_demo.h"
 
@@ -97,6 +98,8 @@ static struct
 	long menu_frames;
 	BOOL level_started;
 	unsigned long started_ms;
+	/* the time stamp counter and the GPU waits' cycles at the start */
+	unsigned long long started_cycles, started_waited;
 	long first_game_time;
 } demo;
 
@@ -178,12 +181,18 @@ static void load_readings(void)
 static void finish_playing(void)
 {
 	unsigned long milliseconds = GetTickCount() - demo.started_ms;
+	unsigned long long cycles = __builtin_ia32_rdtsc() - demo.started_cycles;
+	unsigned long long waited = xbox_gpu_waited_cycles() - demo.started_waited;
+	/* (the processor's own time: the share of the cycles not spent waiting
+	on the GPU, which xemu's GPU makes much of the frame's time) */
+	unsigned long own = cycles ? (unsigned long)((cycles - waited) * milliseconds / cycles) : milliseconds;
+	unsigned long frames = demo.frames ? (unsigned long)demo.frames : 1UL;
 
 	demo.state = _demo_played;
-	platform_log("demo: done: %ld frames, %ld ticks in %lu ms, %lu.%lu ms a frame%s", demo.frames,
-		game_time_or_none() - demo.first_game_time, milliseconds,
-		demo.frames ? milliseconds / (unsigned long)demo.frames : 0UL,
-		demo.frames ? milliseconds * 10UL / (unsigned long)demo.frames % 10UL : 0UL,
+	platform_log("demo: done: %ld frames, %ld ticks in %lu ms, %lu.%lu ms a frame, %lu.%lu of the processor's own "
+		"(%lu%% waiting on the GPU)%s", demo.frames, game_time_or_none() - demo.first_game_time, milliseconds,
+		milliseconds / frames, milliseconds * 10UL / frames % 10UL, own / frames, own * 10UL / frames % 10UL,
+		cycles ? (unsigned long)(waited * 100 / cycles) : 0UL,
 		demo.out_of_step ? " (the game went another way: not comparable)" : "");
 	platform_log("== XBOX DONE ==");
 	platform_request_quit();
@@ -206,6 +215,8 @@ static const struct demo_reading *next_reading(void)
 	if (demo.next == 0)
 	{
 		demo.started_ms = GetTickCount();
+		demo.started_cycles = __builtin_ia32_rdtsc();
+		demo.started_waited = xbox_gpu_waited_cycles();
 		platform_log("demo: playing from game time %ld", now);
 	}
 	if (now != reading->game_time && !demo.out_of_step)
