@@ -123,6 +123,12 @@ match (`halo_screen_pixel_aspect`, `source/render/render_cameras.c`). The
 menus and HUD, laid out for 640 columns, stretch with the picture. The log's
 `GPU: pbkit started` line gives the console's setting.
 
+The settings screens show the Xbox's own rows (`platform="xbox"` in the
+menus' files, `tools/port_settings.py`): Video Setup is WIDESCREEN and the
+field of view; there is no window, resolution, frame rate limit,
+V-Sync, interpolation, graphics screen, voice chat, invite clipboard or
+updater to set.
+
 `debug.start_map` (`--env HALO_START_MAP=b30`) starts a map the menus do not
 reach a few seconds into the main menu: a campaign level at normal, any
 other map (`bloodgulch`, `bloodgulch:ctf`) as a one-player split screen game.

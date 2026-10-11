@@ -28,8 +28,9 @@ VOLUMES = [(str(step), f"{step / 10:g}") for step in range(11)]
 # menu opens), its header (widget, bitmap), the row spacing, and its rows:
 # (label, setting, [(shown, value)], help, platform[, key]): platform is None
 # for every platform, else the platforms the row is for, separated by spaces
-# ("desktop", "android", "web": the menus' platform attribute,
-# port/linux/src/menu_files.c); key names the row's widgets where two rows set
+# ("desktop", "android", "web", "xbox": the menus' platform attribute,
+# port/linux/src/menu_files.c; the original Xbox, port/xbox, has no window,
+# interpolation, high-res art, voices, clipboard or updater); key names the row's widgets where two rows set
 # one setting (one for each platform), else the setting's name does
 SCREENS = {
     "video_settings": {
@@ -60,15 +61,18 @@ SCREENS = {
             ("RESOLUTION SCALING:", "display.resolution_scaling", [("NATIVE", "native"), ("ORIGINAL", "original")],
              "Native draws at the resolution; Original draws\nthe Xbox's 640x480 and scales it up.", "desktop web"),
             ("V-SYNC:", "display.vsync", ON_OFF,
-             "Wait for the display between frames, so that the\npicture never tears.", None),
+             "Wait for the display between frames, so that the\npicture never tears.", "desktop android web"),
             ("FRAME RATE LIMIT:", "display.max_fps",
              [("AUTO", "0"), ("30", "30"), ("60", "60"), ("120", "120"), ("144", "144"), ("165", "165"),
               ("240", "240"), ("NONE", "-1")],
              "With V-Sync off, the most frames a second. Auto:\ntwice the display's refresh rate.", "desktop web"),
             ("SMOOTH MOTION:", "display.interpolation", ON_OFF,
-             "Draw a frame for every display refresh, blending\nbetween the game's 30 ticks a second.", None),
+             "Draw a frame for every display refresh, blending\nbetween the game's 30 ticks a second.",
+             "desktop android web"),
             ("INSTANT AIM:", "display.direct_camera", ON_OFF,
              "In first person, turn the view the moment the\nmouse moves, not up to two ticks later.", "desktop web"),
+            ("WIDESCREEN:", "display.widescreen", [("AUTO", "auto"), ("ON", "on"), ("OFF", "off")],
+             "On for a 16:9 television: a wider view. Auto\nfollows the console's video setting.", "xbox"),
             ("HIGH-RES HUD:", "display.high_res_hud", ON_OFF,
              "Draw the HUD from the high-res redraws; off\ndraws the game's own pictures.", None),
             ("HIGH-RES TEXT:", "display.high_res_text", ON_OFF,
@@ -132,8 +136,9 @@ SCREENS = {
             # voice chat: this machine's own (port/linux/game/network_voice.c)
             ("VOICE CHAT:", "audio.voice_chat",
              [("PUSH TO TALK", "push_to_talk"), ("OPEN MIC", "open_mic"), ("OFF", "off")],
-             "Talk in network games: while PUSH TO TALK is held\n(Controls), whenever you speak, or never.", None),
-            ("VOICE VOLUME:", "audio.voice_volume", VOLUMES, "The other players' voices.", None),
+             "Talk in network games: while PUSH TO TALK is held\n(Controls), whenever you speak, or never.",
+             "desktop android web"),
+            ("VOICE VOLUME:", "audio.voice_volume", VOLUMES, "The other players' voices.", "desktop android web"),
         ],
     },
     "network_setup": {
@@ -141,15 +146,16 @@ SCREENS = {
         "header": ("header_profile_network_settings", f"{PE}/network_setup/header_profile_network_settings"),
         "spacing": 30,
         # (the router, the clipboard and the updates, which the web build
-        # has not: the other rows from the top there)
+        # has not, and the clipboard and updates, which the Xbox has not:
+        # the other rows from the top there)
         "platform_places": True,
         "rows": [
             ("INTERNET PLAY:", "network.online", ON_OFF,
              "Host and join games over the internet by invite\nlinks; off keeps to the local network.",
-             "desktop android web"),
+             "desktop android web xbox"),
             ("UPNP PORT FORWARDING:", "network.allow_upnp", ON_OFF,
              "Let internet play ask the router to forward its\nport, for networks that stop connections.",
-             "desktop android"),
+             "desktop android xbox"),
             ("JOIN FROM CLIPBOARD:", "network.join_from_clipboard", ON_OFF,
              "Join the game of an invite link copied before\nswitching to the game.", "desktop android"),
             ("CHECK FOR UPDATES:", "update.auto", ON_OFF,
@@ -203,8 +209,10 @@ SCREENS["video_settings/graphics"] = {
     "rows": [row for row in _video["rows"] if row[1] in _graphics],
 }
 _video["rows"] = [row for row in _video["rows"] if row[1] not in _graphics]
+# (a category: label, folder, help[, platform])
 _video["categories"] = [
-    ("GRAPHICS:", "video_settings/graphics", "The HUD, text, anti-aliasing, shadows and\nlighting."),
+    ("GRAPHICS:", "video_settings/graphics", "The HUD, text, anti-aliasing, shadows and\nlighting.",
+     "desktop android web"),
     ("FOV AND VIEWMODELS:", "video_settings/fov_viewmodels",
      "The field of view and the first-person\nweapon. Their defaults keep the stock view."),
 ]
@@ -356,7 +364,7 @@ def _setting_screen(folder: str, spec: dict) -> list:
     # (platform_places: each platform's rows in places of their own, with
     # no gap where the others' are; a row in one place for all its
     # platforms, else a child for each place)
-    places = {"desktop": -1, "android": -1, "web": -1}
+    places = {"desktop": -1, "android": -1, "web": -1, "xbox": -1}
     for index, (label, setting, choices, _, platform, *named) in enumerate(spec["rows"]):
         key = named[0] if named else setting.split(".", 1)[1]
         row = f"{base}/op_{key}"
@@ -392,18 +400,20 @@ def _setting_screen(folder: str, spec: dict) -> list:
                           ("header_bounds", "7 -13 19 -7" if wide else "7 -6 19 0"),
                           ("footer_bounds", "7 208 19 214" if wide else "7 150 19 156")],
                          ['<on event="created" run="port setting load"/>'])
-    for index, (label, category_folder, _) in enumerate(spec.get("categories", ())):
+    for index, (label, category_folder, _, *platform) in enumerate(spec.get("categories", ())):
         key = category_folder.rsplit("/", 1)[-1]
         row = f"{base}/op_{key}"
         target = f"{PE}/{category_folder}/{SCREENS[category_folder]['screen']}"
+        platform = platform[0] if platform else None
         if spec.get("platform_places"):
-            for name in places:
+            members = platform.split() if platform else list(places)
+            for name in members:
                 places[name] += 1
-            rows += _placed(row, None, list(places), places)
+            rows += _placed(row, platform, members, places)
         else:
-            rows.append((row, None, place + 1 + index))
+            rows.append((row, platform, place + 1 + index))
         extra += _widget(row, [("width", 512), ("height", 28), ("flags", "pass_unhandled_to_focused_child"),
-                               ("bitmap", "bitmaps/option_bkds"), ("color", "#FF2896FF")],
+                               ("bitmap", "bitmaps/option_bkds"), ("color", "#FF2896FF"), ("platform", platform)],
                          [f'<on event="a" open="{target}"/>', f'<on event="start" open="{target}"/>',
                           '<on event="left_mouse" run="mouse emit accept event"/>',
                           f'<child widget="{base}/{key}_label"/>'])
@@ -420,7 +430,7 @@ def _setting_screen(folder: str, spec: dict) -> list:
     # (the help of the row whose label is string n is n + 1: the buttons' is 0)
     extra += _strings(f"{base}/help_strings",
                       [""] + [help_text.replace("\n", "\\n") for _, _, _, help_text, *_ in spec["rows"]] +
-                      [help_text.replace("\n", "\\n") for _, _, help_text in spec.get("categories", ())])
+                      [help_text.replace("\n", "\\n") for _, _, help_text, *_ in spec.get("categories", ())])
     return _screen(folder, spec, rows, ["port settings help"], [], extra)
 
 

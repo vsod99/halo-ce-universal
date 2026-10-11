@@ -387,9 +387,12 @@ static long current_line(struct reader *reader)
 	return (long)XML_GetCurrentLineNumber(reader->parser);
 }
 
-/* this build's platform, as the platform attribute names it */
+/* this build's platform, as the platform attribute names it (the original
+Xbox, which builds as the desktop does, is "xbox" alone) */
 #ifdef HALO_ANDROID
 #define MENU_PLATFORM "android"
+#elif defined(HALO_XBOX)
+#define MENU_PLATFORM "xbox"
 #elif defined(HALO_WEB)
 #define MENU_PLATFORM "web"
 #else
@@ -416,9 +419,9 @@ static int for_this_platform(struct reader *reader, const XML_Char **attributes)
 				if (length)
 				{
 					if ((length != 7 || strncmp(name, "desktop", 7)) && (length != 7 || strncmp(name, "android", 7)) &&
-						(length != 3 || strncmp(name, "web", 3)))
+						(length != 3 || strncmp(name, "web", 3)) && (length != 4 || strncmp(name, "xbox", 4)))
 					{
-						reader_error(reader, "platform=\"%s\" names one that is not desktop, android or web",
+						reader_error(reader, "platform=\"%s\" names one that is not desktop, android, web or xbox",
 							attributes[index + 1]);
 						return 1;
 					}

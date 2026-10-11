@@ -16,15 +16,15 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_output_device" x="54" y="73" platform="desktop"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_input_device" x="54" y="103" platform="desktop"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_volume" x="54" y="133" platform="desktop"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_volume" x="54" y="73" platform="android web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_volume" x="54" y="73" platform="android web xbox"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_music_volume" x="54" y="163" platform="desktop"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_music_volume" x="54" y="103" platform="android web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_music_volume" x="54" y="103" platform="android web xbox"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_effects_volume" x="54" y="193" platform="desktop"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_effects_volume" x="54" y="133" platform="android web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_effects_volume" x="54" y="133" platform="android web xbox"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_reverb" x="54" y="223" platform="desktop"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_reverb" x="54" y="163" platform="android web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_reverb" x="54" y="163" platform="android web xbox"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_enabled" x="54" y="253" platform="desktop"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_enabled" x="54" y="193" platform="android web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_enabled" x="54" y="193" platform="android web xbox"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_voice_chat" x="54" y="283" platform="desktop"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_voice_chat" x="54" y="223" platform="android web"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_voice_volume" x="54" y="313" platform="desktop"/>
@@ -99,7 +99,7 @@
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/enabled_spinner" type="spinner" left="3" top="2" width="147" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="ON|OFF" setting="audio.enabled" values="true|false" font="ui\large_ui" color="#FF2896FF" align="center" text_y="1" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -6 19 0" footer_bounds="7 150 19 156">
 		<on event="created" run="port setting load"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_voice_chat" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_voice_chat" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF" platform="desktop android web">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/voice_chat_label"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/voice_chat_spinner" x="320" y="1"/>
 	</widget>
@@ -108,7 +108,7 @@
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/voice_chat_spinner" type="spinner" left="3" top="2" width="147" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="PUSH TO TALK|OPEN MIC|OFF" setting="audio.voice_chat" values="push_to_talk|open_mic|off" font="ui\large_ui" color="#FF2896FF" align="center" text_y="1" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -6 19 0" footer_bounds="7 150 19 156">
 		<on event="created" run="port setting load"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_voice_volume" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_voice_volume" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF" platform="desktop android web">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/voice_volume_label"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/voice_volume_spinner" x="320" y="1"/>
 	</widget>
