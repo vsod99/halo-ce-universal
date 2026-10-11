@@ -673,8 +673,8 @@ void shader_texture_animation_evaluate(
 	if (angle_degrees != 0.0f)
 	{
 		real radians = DEGREES_TO_RADIANS(angle_degrees);
-		cosine_value = cosine(radians);
-		sine_value = sine(radians);
+		/* port: both from one reduction of the angle */
+		sine_cosine(radians, &sine_value, &cosine_value);
 	}
 	else
 	{

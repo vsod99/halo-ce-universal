@@ -1064,16 +1064,19 @@ static void render_blip(
 	real distance_scale;
 	real pulse_scale;
 	real blip_draw_size;
+	real yaw_sine, yaw_cosine;
 
 	match_assert(
 		"c:\\halo\\SOURCE\\interface\\motion_sensor.c",
 		410,
 		_blip_type_none != blip_type);
 
+	/* port: both from one reduction of the angle */
+	sine_cosine(-sensor->yaw, &yaw_sine, &yaw_cosine);
 	rotate_vector2d(
 		(real_vector2d const *)&blip_position,
-		sine(-sensor->yaw),
-		cosine(-sensor->yaw),
+		yaw_sine,
+		yaw_cosine,
 		(real_vector2d *)&blip_position);
 
 	distance_squared = magnitude_squared2d((real_vector2d const *)&blip_position);
