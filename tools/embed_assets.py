@@ -51,6 +51,9 @@ WINDOW_ICON = Path("port/assets/icon/opence-icon-256.png")
 # the original Xbox's copies of the menus' pictures, at the size they are
 # drawn (tools/xbox_menu_art.py)
 XBOX_MENU_ART = MENU_ASSETS / "xbox"
+# the certificate authorities the original Xbox's self-updater checks
+# servers against (port/xbox/src/nxdk_update.c)
+XBOX_ROOTS = Path("port/assets/network/xbox_roots.pem")
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -89,9 +92,10 @@ def smaa_files() -> List[tuple]:
 def xbox_menu_inputs() -> List[Path]:
     """The files the original Xbox's menus are embedded from: the menus'
     files, with the Xbox's copies of their pictures (tools/xbox_menu_art.py)
-    in place of the pictures."""
+    in place of the pictures, and its self-updater's certificate
+    authorities, which go in the same file."""
     return [MENU_LIST, XBOX_MENU_ART / "sources.json", *(MENU_ASSETS / name for name in menu_files()),
-            *(XBOX_MENU_ART / name for name in menu_files() if name.endswith(".png"))]
+            *(XBOX_MENU_ART / name for name in menu_files() if name.endswith(".png")), XBOX_ROOTS]
 
 
 def hud_asset_inputs() -> List[Path]:
@@ -257,6 +261,15 @@ def main() -> None:
         lines.append("\t{ 0 },")
     lines.append("};")
     lines.append(f"const unsigned int menu_files_embedded_count = {len(menus)};")
+    # (and the Xbox's self-updater's certificate authorities, as text ending
+    # in a NUL, which Mbed TLS's parser takes)
+    if xbox:
+        data = (ROOT / XBOX_ROOTS).read_bytes() + b"\0"
+        lines.append("")
+        lines.append("const unsigned int xbox_certificate_authorities[] = {")
+        lines.extend(words(data))
+        lines.append("};")
+        lines.append(f"const unsigned long xbox_certificate_authorities_size = {len(data)};")
     # (and SMAA and the window icon, which the original Xbox has neither of)
     if not menus_only:
         lines.append("")

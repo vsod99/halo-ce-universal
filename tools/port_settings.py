@@ -30,7 +30,7 @@ VOLUMES = [(str(step), f"{step / 10:g}") for step in range(11)]
 # for every platform, else the platforms the row is for, separated by spaces
 # ("desktop", "android", "web", "xbox": the menus' platform attribute,
 # port/linux/src/menu_files.c; the original Xbox, port/xbox, has no window,
-# interpolation, high-res art, voices, clipboard or updater); key names the row's widgets where two rows set
+# interpolation, high-res art, voices or clipboard); key names the row's widgets where two rows set
 # one setting (one for each platform), else the setting's name does
 SCREENS = {
     "video_settings": {
@@ -146,8 +146,8 @@ SCREENS = {
         "header": ("header_profile_network_settings", f"{PE}/network_setup/header_profile_network_settings"),
         "spacing": 30,
         # (the router, the clipboard and the updates, which the web build
-        # has not, and the clipboard and updates, which the Xbox has not:
-        # the other rows from the top there)
+        # has not, and the clipboard, which the Xbox has not: the other rows
+        # from the top there)
         "platform_places": True,
         "rows": [
             ("INTERNET PLAY:", "network.online", ON_OFF,
@@ -159,7 +159,7 @@ SCREENS = {
             ("JOIN FROM CLIPBOARD:", "network.join_from_clipboard", ON_OFF,
              "Join the game of an invite link copied before\nswitching to the game.", "desktop android"),
             ("CHECK FOR UPDATES:", "update.auto", ON_OFF,
-             "Look for a new version when the game starts.", "desktop android"),
+             "Look for a new version when the game starts.", "desktop android xbox"),
             ("PLAYER NAMES:", "display.player_names",
              [("ALL", "all"), ("ALLIES", "allies"), ("ENEMIES", "enemies"), ("NONE", "none")],
              "In multiplayer, whose names are drawn above their\nheads.", None),

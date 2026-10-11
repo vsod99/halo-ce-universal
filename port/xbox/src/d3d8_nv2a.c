@@ -2210,6 +2210,8 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		last_frame = frame;
 		last_blank = blank;
 	}
+	/* (between frames: the updater's question takes the screen there) */
+	xbox_update_frame();
 }
 
 HRESULT WINAPI D3DDevice_PersistDisplay(void)

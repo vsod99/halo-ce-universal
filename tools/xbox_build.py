@@ -22,10 +22,10 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .linux_build import (EXPAT_DIR, KCP_DIR, MINIUPNPC_DEFINES, MINIUPNPC_DIR, MONOCYPHER_DIR, MUSL_MATH_DIR,
+from .linux_build import (EXPAT_DIR, KCP_DIR, MBEDTLS_DIR, MINIUPNPC_DEFINES, MINIUPNPC_DIR, MONOCYPHER_DIR, MUSL_MATH_DIR,
                           TOML_DIR, XDK_INCLUDE, ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES, compile_launcher,
                           game_defines_and_includes, game_sources, miniupnpc_sources, musl_math_sources,
-                          xdk_headers)
+                          updater_defines, xdk_headers)
 from .embed_assets import xbox_menu_inputs
 from .ninja_syntax import Writer
 from .windows_build import EXPAT_SOURCES, inline_export_wrapper
@@ -321,9 +321,23 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
         n.build(outputs=obj, rule="xbox_cc", inputs=source,
                 implicit=[PORT_DIR / "src" / "lwip_config" / "lwipopts.h", *upnp_headers],
                 variables={"cflags": f"{upnp_cflags} -w"})
+    # the self-updater's TLS (port/third_party/mbedtls; posix_update.c,
+    # nxdk_update.c): a client only, with the Xbox's configuration
+    # (port/xbox/src/mbedtls_xbox_config.h)
+    mbedtls_config = PORT_DIR / "src" / "mbedtls_xbox_config.h"
+    mbedtls_flags = f"-I{MBEDTLS_DIR / 'include'} '-DMBEDTLS_USER_CONFIG_FILE=\"mbedtls_xbox_config.h\"'"
+    for source in sorted((MBEDTLS_DIR / "library").glob("*.c")):
+        obj = obj_dir / "mbedtls" / source.with_suffix(".o").name
+        objects.append(obj)
+        n.build(outputs=obj, rule="xbox_cc", inputs=source, implicit=[mbedtls_config],
+                variables={"cflags": f"{nxdk_cflags} -Os -U_WIN32 -U_MSC_VER {mbedtls_flags} -I{MBEDTLS_DIR / 'library'} -w"})
     for source in sorted((PORT_DIR / "src").glob("*.c")):
         if source.name == "nxdk_net.c":
             add_object(source, lwip_cflags)
+        elif source.name == "nxdk_update.c":
+            # (and the inflater for the release's zip, and the build's number)
+            add_object(source, " ".join([lwip_cflags, "-U_MSC_VER", mbedtls_flags, f"-I{ZLIB_DIR}", *ZLIB_DEFINES,
+                                         updater_defines(getattr(sln, "port_release", False))]))
         elif source.name == "nxdk_upnp.c":
             obj = obj_dir / source.with_suffix(".o")
             objects.append(obj)
@@ -334,6 +348,10 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
             add_object(source, nxdk_cflags if source.name.startswith("nxdk_") else platform_cflags)
     for source in sorted((PORT_DIR / "common").glob("*.c")):
         add_object(source, nxdk_cflags)
+    # the self-updater's download, the Linux build's (over nxdk_update.c's
+    # connection and certificate authorities), with lwIP's POSIX names
+    add_object(LINUX_DIR / "src" / "posix_update.c",
+               f"-I{PORT_DIR / 'include' / 'lwip_posix'} {lwip_cflags} -U_MSC_VER {mbedtls_flags}")
     for source in config.get("windows_platform_sources", []):
         add_object(Path(source), nxdk_cflags)
     # the menus' files (port/assets/menus; menu_files.c), without the

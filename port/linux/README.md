@@ -450,6 +450,10 @@ let the game write to it.
 Builds that you make yourself have no build number. They do not look for
 updates.
 
+The original Xbox build updates itself the same way, with its own screen
+and the certificate authorities it carries (refer to
+[port/xbox/README.md](../xbox/README.md), "Updates").
+
 ## Frame rate
 
 The game calculates its world at 30 Hz, as on the Xbox. On the Xbox, the

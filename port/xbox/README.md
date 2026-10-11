@@ -114,6 +114,7 @@ pictures change.
 | `nxdk_net.c` | The sockets under Linux's Winsock layer (`port/linux/src/xnet.c`) over lwIP, which the build compiles with the loopback interface (`lwip_config/lwipopts.h`): nxdk's Ethernet driver (started before the game takes its memory), the address from DHCP or a link-local one in the background (claimed once the first DHCP request goes unanswered, there 7-8 s after start-up; logged when it comes), XNet's link the cable's and its address pending until then (the game's transport waits up to 10 s for it, as with the console's own XNet). A split screen game joins its own host through 127.0.0.1. Names are looked up with lwIP's DNS (the DHCP server's; none with a link-local address) |
 | `nxdk_p2p.c` | Internet play's (`port/linux/src/p2p*.c`) process half of `posix.h`: the hardware id from the EEPROM's serial number and Ethernet address; no command line (a test's `HALO_COMMAND_LINE` stands in), links, second copy or Discord. The brokers' list is `D:\brokers.txt`, beside the XBE (the build puts it there) |
 | `nxdk_upnp.c` | Internet play's UPnP: `port/linux/src/posix_upnp.c` and miniupnpc compiled as on a POSIX system against lwIP's sockets by their POSIX names (`include/lwip_posix`) |
+| `nxdk_update.c` | The self-updater (below, "Updates"): the check, the question on pbkit's text screen, the zip, the files put in place and the new XBE started; Mbed TLS's platform (entropy from nxdk's `rand_s` and the time stamp counter, its connection over lwIP). The download is `port/linux/src/posix_update.c`'s, Mbed TLS built as a TLS client alone (`mbedtls_xbox_config.h`) |
 
 Threads, mutexes, condition variables and clocks are the Windows build's
 (`port/windows/src/win32_threads.c`, nxdk has those Windows calls), and the
@@ -133,8 +134,8 @@ menus and HUD, laid out for 640 columns, stretch with the picture. The log's
 The settings screens show the Xbox's own rows (`platform="xbox"` in the
 menus' files, `tools/port_settings.py`): Video Setup is WIDESCREEN and the
 field of view; there is no window, resolution, frame rate limit,
-V-Sync, interpolation, graphics screen, voice chat, invite clipboard or
-updater to set.
+V-Sync, interpolation, graphics screen, voice chat or invite clipboard to
+set. Network Setup has CHECK FOR UPDATES.
 
 `debug.start_map` (`--env HALO_START_MAP=b30`) starts a map the menus do not
 reach a few seconds into the main menu: a campaign level at normal, any
@@ -240,6 +241,48 @@ so a run is silent unless `--listen`: it records as `--wav` does, and
 `tools/xbox_listen.swift` (built with `swiftc` on first use) plays the file
 as xemu writes it. On the console, pictures of frames will come from the
 program over the network.
+
+### Updates
+
+A build GitHub Actions made of the main branch updates itself as the
+desktop builds do (`port/linux/README.md`, "Updates";
+`src/nxdk_update.c`). Once the console has an address, a thread asks
+GitHub for the latest release; if it is newer, the game asks at the main
+menu on pbkit's text screen, the game's last frame waiting behind it: A
+updates, B carries on (asked again at the next start), Y stops the
+questions (`update.auto = false`; CHECK FOR UPDATES in Network Setup turns
+them on again). The update downloads the release's `halo-xbox-release.zip`
+(or `-debug`) over HTTPS into `update.partial` in the XBE's folder, shows
+how far it has got, unpacks it, puts its files in place of the running
+XBE's (under the running XBE's name, if it was renamed; the old ones become
+`.old`, deleted at the next start) and starts the new XBE. The server's
+certificate is checked against the certificate authorities the program
+carries (`port/assets/network/xbox_roots.pem`: GitHub's API chains to
+USERTrust ECC, its downloads to ISRG Root X1), not its dates (an Xbox's
+clock is whatever was set). A program started from a disc never looks.
+
+TLS costs the program about 220 KB (Mbed TLS at `-Os`, the certificates),
+and a check or download about 100 KB of the heap while it runs.
+
+To try it, build with a number (`HALO_BUILD_NUMBER=1 python3 configure.py
+--release` and `HALO_BUILD_NUMBER=1 ninja xbox`: ninja runs configure again
+with its own environment) and run it from the hard disk
+(`HALO_TEST_FROM_HARD_DISK=1`), with `HALO_UPDATE_ANSWER` (`yes`, `no`,
+`never`) answering for the player:
+
+- `--env HALO_UPDATE_ANSWER=no`: the check (`update: build N is available
+  (this is build 1)`).
+- `--env HALO_TEST_UPDATE_ASSET=halo-windows-release-symbols.zip` with
+  `yes`: a real download of another of the release's files, through GitHub's
+  redirect to its file host, which the update refuses (`the download has no
+  default.xbe`), the game carrying on.
+- `--env 'HALO_TEST_UPDATE_ZIP=R:\update_test.zip'` with `yes`: installs a
+  zip on the image (put it in `build/xbox/halo/bin`) instead of
+  downloading: one made of a build numbered higher (999999) and
+  `brokers.txt` restarts as that build, which finds itself the latest and
+  deletes the `.old` files.
+
+Oct 11, xemu: all three as described.
 
 ### System link between two Xboxes
 

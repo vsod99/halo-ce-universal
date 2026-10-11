@@ -20,4 +20,8 @@ its own WebRTC).
 
 The Linux build's self-updater (`port/linux/src/posix_update.c`) uses it to
 download new builds over HTTPS, with the system's certificate authorities.
+The original Xbox build's self-updater uses the same download, with Mbed
+TLS built as a TLS client alone (`port/xbox/src/mbedtls_xbox_config.h`) and
+the certificate authorities in the program (`port/assets/network/
+xbox_roots.pem`).
 The Windows build uses WinHTTP instead, and the Android app Java's HTTPS.

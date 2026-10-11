@@ -22,6 +22,10 @@ int xbox_maps_found(void);
 or the player goes back to the dashboard (nxdk_main.c) */
 int xbox_wait_for_maps(void);
 
+/* each frame, once it is shown: the self-updater's check, and its question
+at the main menu (nxdk_update.c) */
+void xbox_update_frame(void);
+
 /* the game state's virtual memory at its fixed address
 (cache/physical_memory_map.c; nxdk_memory.c) */
 void *xbox_game_state_allocate(unsigned long address, unsigned long size);

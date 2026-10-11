@@ -14,6 +14,11 @@ is used only on a system with no bundle, with a warning on stderr: whatever
 sets the environment would otherwise choose whom updates are trusted from.
 
 Built with the host's ABI, as the other posix_*.c.
+
+The original Xbox builds the download alone (NXDK): its certificate
+authorities are in the program and parsed for each download (its memory is
+small), and its files and starting the new game are its own
+(port/xbox/src/nxdk_update.c), as is Mbed TLS's connection, over lwIP.
 */
 
 #include "update.h"
@@ -26,21 +31,28 @@ Built with the host's ABI, as the other posix_*.c.
 #include "psa/crypto.h"
 
 #include <errno.h>
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <unistd.h>
+#ifndef NXDK
+#include <pthread.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unistd.h>
+#endif
 
 #define UPDATE_USER_AGENT "halo-ce-universal-updater"
 #define MAXIMUM_REDIRECTS 8
 #define TIMEOUT_MILLISECONDS 20000
 #define MAXIMUM_HEADER_SIZE 16384
 
+#ifdef NXDK
+/* the certificate authorities the program carries (nxdk_update.c); 1 when
+they parsed */
+int xbox_update_certificates(mbedtls_x509_crt *certificates);
+#else
 /* where distributions keep their certificate authorities */
 static const char *const certificate_bundles[] =
 {
@@ -52,10 +64,19 @@ static const char *const certificate_bundles[] =
 };
 
 static pthread_once_t certificates_once = PTHREAD_ONCE_INIT;
+#endif
 static mbedtls_x509_crt certificates;
 static int certificates_loaded;
 static int crypto_ready;
 
+#ifdef NXDK
+static void load_certificates(void)
+{
+	crypto_ready = psa_crypto_init() == PSA_SUCCESS;
+	mbedtls_x509_crt_init(&certificates);
+	certificates_loaded = xbox_update_certificates(&certificates);
+}
+#else
 static void load_certificates(void)
 {
 	const char *environment = getenv("SSL_CERT_FILE");
@@ -89,6 +110,7 @@ static void load_certificates(void)
 			"server is checked against SSL_CERT_FILE (%s) instead\n", environment);
 	}
 }
+#endif
 
 static void set_error(char *error, int error_size, const char *what, int code)
 {
@@ -477,15 +499,14 @@ static int https_get(const char *url, struct download *download, char *location,
 	return status;
 }
 
-int update_download(const char *url, const char *path, update_progress_proc progress, void *context, char *error,
-	int error_size)
+static int download_to(const char *url, const char *path, update_progress_proc progress, void *context,
+	char *error, int error_size)
 {
 	char current[2048];
 	char location[2048];
 	struct download download;
 	int redirect;
 
-	pthread_once(&certificates_once, load_certificates);
 	if (!crypto_ready)
 	{
 		snprintf(error, (size_t)error_size, "could not start the cryptography");
@@ -493,8 +514,12 @@ int update_download(const char *url, const char *path, update_progress_proc prog
 	}
 	if (!certificates_loaded)
 	{
+#ifdef NXDK
+		snprintf(error, (size_t)error_size, "the program's certificate authorities did not parse");
+#else
 		snprintf(error, (size_t)error_size, "the system's certificate authorities were not found "
 			"(install ca-certificates, or set SSL_CERT_FILE)");
+#endif
 		return 0;
 	}
 	memset(&download, 0, sizeof(download));
@@ -548,6 +573,27 @@ int update_download(const char *url, const char *path, update_progress_proc prog
 	return 0;
 }
 
+int update_download(const char *url, const char *path, update_progress_proc progress, void *context, char *error,
+	int error_size)
+{
+#ifdef NXDK
+	/* (parsed each time and let go, with the cryptography's state: one
+	download at a time, on one thread) */
+	int succeeded;
+
+	load_certificates();
+	succeeded = download_to(url, path, progress, context, error, error_size);
+	mbedtls_x509_crt_free(&certificates);
+	certificates_loaded = 0;
+	mbedtls_psa_crypto_free();
+	return succeeded;
+#else
+	pthread_once(&certificates_once, load_certificates);
+	return download_to(url, path, progress, context, error, error_size);
+#endif
+}
+
+#ifndef NXDK
 /* ---------- files and processes */
 
 int update_executable_path(char *path, int size)
@@ -609,3 +655,4 @@ int update_launch(const char *path)
 	}
 	return child > 0;
 }
+#endif
