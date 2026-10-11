@@ -183,10 +183,29 @@ static unsigned long environment_serial;
 /* audio.reverb */
 static BOOL reverb_enabled = TRUE;
 
+/* 10^(millibels / 2000) for the volumes DirectSound takes (DSBVOLUME_MIN
+to 0), as a whole number of hundreds' gain times the rest's: every voice
+works out several of them each chunk, and powf (x87 on the Xbox, whose C
+library's is exp(y log x)) was a sixth of the mixer's time there */
+static float gain_hundreds[-DSBVOLUME_MIN / 100 + 1];
+static float gain_units[100];
+
+static void gains_initialize(void)
+{
+	int index;
+
+	for (index = 0; index <= -DSBVOLUME_MIN / 100; index++)
+		gain_hundreds[index] = (float)pow(10.0, -index / 20.0);
+	for (index = 0; index < 100; index++)
+		gain_units[index] = (float)pow(10.0, -index / 2000.0);
+}
+
 static float gain_from_millibels(LONG millibels)
 {
 	if (millibels <= DSBVOLUME_MIN)
 		return 0.0f;
+	if (millibels <= 0)
+		return gain_hundreds[-millibels / 100] * gain_units[-millibels % 100];
 	return powf(10.0f, (float)millibels / 2000.0f);
 }
 
@@ -1499,6 +1518,7 @@ static void audio_start(void)
 	audio_started = TRUE;
 	master_volume = (float)config_real("audio.volume");
 	reverb_enabled = config_boolean("audio.reverb");
+	gains_initialize();
 	resampler_initialize();
 	resampler_phases_initialize();
 	reverb_initialize();
