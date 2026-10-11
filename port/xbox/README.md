@@ -283,10 +283,22 @@ waiting on the GPU)`:
     python3 tools/xbox_dev.py run build/xbox/halo --env HALO_DEMO=play --profile 30:40
 
 While a demo records or plays, each frame runs a tick and a half of game
-time, so the game goes the same way however long frames take (a recording
-in xemu goes at its frame rate's share of the game's speed); a reading
-played at another game time than it was taken at means the game went
-another way, and the log says the demo is not comparable.
+time, and held buttons are timed by those frames, so that the game goes the
+same way however long frames take (a recording in xemu goes at its frame
+rate's share of the game's speed). The recording loads its own save as it
+starts, as the demo played does, and both start from the game's random
+seeds as they were (the save leaves them out). Each reading keeps the
+seed, and the log names the first reading a playback's differs at, and
+whether it ended at the recording's: a demo that went another way is not
+comparable.
+
+Demos do not yet always go the same way. A playback can part from the
+recording (the session that played up to the save has state of its own
+besides the save: frame counts in the objects and lights, the particles),
+and two playbacks can part from each other: the sound is mixed in real time
+and the game reads when its sounds end (`--env HALO_NO_AUDIO=1` takes that
+away), and something else timed by the clock remains. The log's lines say
+when; compare builds by profile shares until they agree.
 
 In xemu the frame's time is mostly the wait on xemu's GPU (b30's demo:
 75 ms a frame, 60-66% of it waiting), and the same build's frame time

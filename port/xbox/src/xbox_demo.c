@@ -20,9 +20,12 @@ frames and their time and quits when they run out.
 
 While a demo records or plays, every frame runs a fixed time (main.c), so
 that the game ticks alike however long the frames take to draw: recorded in
-xemu at 10 frames a second, the game goes at a third of its speed. Each
-reading keeps the game time it was taken at: one taken at another time when
-played means the game went another way, and the log says so.
+xemu at 10 frames a second, the game goes at a third of its speed. The
+game's random seed is not in its save: the recording keeps it, and the
+demo plays from it, so that the AI and every other chance goes as it did.
+Each reading keeps the game time it was taken at, and the recording the
+seed as it ended: a reading played at another time, or another seed at the
+end, means the game went another way, and the log says so.
 */
 
 #include "platform.h"
@@ -41,7 +44,7 @@ played means the game went another way, and the log says so.
 one not ended (the console turned off) leaves the last demo whole */
 #define RECORDING_INPUT_FILE "E:\\halo\\demo_recording.bin"
 #define RECORDING_CORE_NAME "demo_recording.bin"
-#define DEMO_MAGIC 0x314D4458UL /* XDM1 */
+#define DEMO_MAGIC 0x344D4458UL /* XDM4 */
 /* (at a reading a frame, over 30 minutes at xemu's 10 frames a second) */
 #define MAXIMUM_READINGS 20000
 /* the main menu's frames before playing starts the level (its ui.map loaded) */
@@ -56,10 +59,16 @@ unsigned char game_in_progress(void);
 unsigned char main_menu_is_active(void);
 void main_save_core_name(char const *core_name);
 void main_load_core_name_at_startup(char const *core_name);
+void main_load_core_name(char const *core_name);
 void pc_menu_start_map(char const *map_name);
 char *main_get_map_name(void);
 short main_get_difficulty(void);
 void main_set_difficulty(short difficulty);
+/* the game's random numbers (source/math/random_math.c): not part of the
+game state, so not in its save */
+unsigned long get_random_seed(void);
+unsigned long *get_global_random_seed_address(void);
+unsigned long *get_global_local_random_seed_address(void);
 /* back to the dashboard (nxdk_main.c) */
 void platform_request_quit(void);
 
@@ -69,11 +78,21 @@ struct demo_header
 	unsigned long count;
 	long difficulty;
 	char level[256];
+	/* the game time the recording started at, and the game's random seed
+	then and as it ended: every random number the game takes moves it, so
+	a demo played the same way ends with the same */
+	long start_game_time;
+	unsigned long start_seed;
+	unsigned long end_seed;
+	/* the seed of the effects' and sounds' random numbers, at the start */
+	unsigned long start_local_seed;
 };
 
 struct demo_reading
 {
 	long game_time;
+	/* the game's random seed as the reading was taken */
+	unsigned long seed;
 	XINPUT_GAMEPAD pad;
 };
 
@@ -81,6 +100,7 @@ enum
 {
 	_demo_off,
 	_demo_waiting_for_save,
+	_demo_waiting_for_load,
 	_demo_recording,
 	_demo_playing,
 	_demo_played
@@ -94,9 +114,14 @@ static struct
 	struct demo_header header;
 	long next;
 	BOOL out_of_step;
+	BOOL seed_differs;
 	long frames;
 	long menu_frames;
 	BOOL level_started;
+	/* the frames run a fixed time since then, and the system's milliseconds
+	then (xbox_demo_milliseconds) */
+	unsigned long fixed_frames;
+	unsigned long fixed_start_ms;
 	unsigned long started_ms;
 	/* the time stamp counter and the GPU waits' cycles at the start */
 	unsigned long long started_cycles, started_waited;
@@ -194,6 +219,12 @@ static void finish_playing(void)
 		milliseconds / frames, milliseconds * 10UL / frames % 10UL, own / frames, own * 10UL / frames % 10UL,
 		cycles ? (unsigned long)(waited * 100 / cycles) : 0UL,
 		demo.out_of_step ? " (the game went another way: not comparable)" : "");
+	if (get_random_seed() != demo.header.end_seed)
+		platform_log("demo: the game's random seed ended at %08lx, not the recording's %08lx: the game went another way "
+			"(not comparable)", get_random_seed(), demo.header.end_seed);
+	else
+		platform_log("demo: the game went as recorded (its random seed ended at the recording's, %08lx)",
+			demo.header.end_seed);
 	platform_log("== XBOX DONE ==");
 	platform_request_quit();
 }
@@ -219,6 +250,12 @@ static const struct demo_reading *next_reading(void)
 		demo.started_waited = xbox_gpu_waited_cycles();
 		platform_log("demo: playing from game time %ld", now);
 	}
+	if (reading->seed != get_random_seed() && !demo.seed_differs)
+	{
+		platform_log("demo: the game's random seed differs from reading %ld on (game time %ld): %08lx recorded, "
+			"%08lx now", demo.next, now, reading->seed, get_random_seed());
+		demo.seed_differs = TRUE;
+	}
 	if (now != reading->game_time && !demo.out_of_step)
 	{
 		platform_log("demo: out of step at reading %ld: recorded at %ld, played at %ld", demo.next,
@@ -243,6 +280,7 @@ static void stop_recording(void)
 	}
 	demo.state = _demo_off;
 	demo.header.magic = DEMO_MAGIC;
+	demo.header.end_seed = get_random_seed();
 	file = fopen(RECORDING_INPUT_FILE, "wb");
 	written = file && fwrite(&demo.header, sizeof(demo.header), 1, file) == 1 &&
 		fwrite(readings, sizeof(readings[0]), demo.header.count, file) == demo.header.count;
@@ -269,8 +307,8 @@ static void toggle_recording(void)
 
 		if (game_time_or_none() < 0 || !level || !*level)
 			return;
-		/* (the game saves at the end of this frame; recording starts with
-		the next: xbox_demo_frame) */
+		/* (the game saves before the next frame's controller readings;
+		recording starts there: xbox_demo_core_saved) */
 		memset(&demo.header, 0, sizeof(demo.header));
 		snprintf(demo.header.level, sizeof(demo.header.level), "%s", level);
 		demo.header.difficulty = main_get_difficulty();
@@ -278,7 +316,8 @@ static void toggle_recording(void)
 		demo.state = _demo_waiting_for_save;
 		main_save_core_name(RECORDING_CORE_NAME);
 	}
-	else if (demo.state == _demo_waiting_for_save || demo.state == _demo_recording)
+	else if (demo.state == _demo_waiting_for_save || demo.state == _demo_waiting_for_load ||
+		demo.state == _demo_recording)
 	{
 		stop_recording();
 	}
@@ -286,22 +325,65 @@ static void toggle_recording(void)
 
 /* ---------- the game's hooks */
 
+/* Loading a save is not going on from where it was made: the game takes
+its after-load steps, which build its caches and connections again. So the
+recording loads its own save at once, and it and the demo played both go on
+from a save just loaded, with the random seeds the save leaves out. The main
+loop saves and loads before it reads the controllers: the first reading is
+the one after the load in both. */
+void xbox_demo_core_saved(void)
+{
+	if (demo.state != _demo_waiting_for_save)
+		return;
+	demo.state = _demo_waiting_for_load;
+	main_load_core_name(RECORDING_CORE_NAME);
+}
+
+void xbox_demo_core_loaded(void)
+{
+	if (demo.state == _demo_waiting_for_load)
+	{
+		demo.state = _demo_recording;
+		demo.header.count = 0;
+		demo.frames = 0;
+		demo.header.start_game_time = game_time_or_none();
+		demo.header.start_seed = get_random_seed();
+		demo.header.start_local_seed = *get_global_local_random_seed_address();
+		platform_log("demo: recording from game time %ld, random seed %08lx", demo.header.start_game_time,
+			demo.header.start_seed);
+		return;
+	}
+	if (demo.state != _demo_playing || !demo.level_started)
+		return;
+	*get_global_random_seed_address() = demo.header.start_seed;
+	*get_global_local_random_seed_address() = demo.header.start_local_seed;
+	platform_log("demo: the save loaded at game time %ld (recorded at %ld), random seed %08lx", game_time_or_none(),
+		demo.header.start_game_time, demo.header.start_seed);
+}
+
 int xbox_demo_fixed_frames(void)
 {
 	return demo.state == _demo_recording || demo.state == _demo_playing;
 }
 
+long xbox_demo_milliseconds(void)
+{
+	/* (a frame is a tick and a half: 50 ms) */
+	if (xbox_demo_fixed_frames())
+		return (long)(demo.fixed_start_ms + demo.fixed_frames * 50UL);
+	return (long)GetTickCount();
+}
+
 void xbox_demo_frame(void)
 {
 	demo_setting();
-	if (demo.state == _demo_waiting_for_save)
+	if (xbox_demo_fixed_frames())
 	{
-		demo.state = _demo_recording;
-		demo.header.count = 0;
-		demo.frames = 0;
-		platform_log("demo: recording from game time %ld", game_time_or_none());
+		if (!demo.fixed_frames && !demo.fixed_start_ms)
+			demo.fixed_start_ms = GetTickCount();
+		demo.fixed_frames++;
 	}
-	else if (demo.state == _demo_playing && !demo.level_started && main_menu_is_active() &&
+	if (demo.state == _demo_playing && !demo.level_started && main_menu_is_active() &&
 		++demo.menu_frames >= PLAY_START_FRAMES)
 	{
 		load_readings();
@@ -354,6 +436,7 @@ void xbox_demo_gamepad(XINPUT_GAMEPAD *pad)
 		}
 		reading = &readings[demo.header.count++];
 		reading->game_time = game_time_or_none();
+		reading->seed = get_random_seed();
 		reading->pad = *pad;
 		demo.frames++;
 	}

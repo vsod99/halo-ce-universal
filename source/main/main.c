@@ -3465,11 +3465,21 @@ static boolean main_loop_iteration(
 			if (main_globals.save_core)
 			{
 				main_save_core_private();
+#ifdef HALO_XBOX
+				/* port: a demo's recording loads its save at once
+				(port/xbox/src/xbox_demo.c) */
+				xbox_demo_core_saved();
+#endif
 			}
 
 			if (main_globals.load_core)
 			{
 				main_load_core_private();
+#ifdef HALO_XBOX
+				/* port: and starts from it, as a demo played does,
+				with the random seeds the save leaves out */
+				xbox_demo_core_loaded();
+#endif
 			}
 
 			if (main_globals.want_to_be_at_main_menu)

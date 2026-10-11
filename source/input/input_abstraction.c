@@ -69,6 +69,9 @@ symbols in this file:
 #include "units/vehicle_definitions.h"
 #include "units/vehicles.h"
 #include "halo_keyboard.h" /* port */
+#ifdef HALO_XBOX
+#include "xbox_demo.h" /* port: port/xbox/src/xbox_demo.c */
+#endif
 
 /* ---------- constants */
 
@@ -214,7 +217,13 @@ static void keyboard_hold_ticks(
 	long *down_time,
 	boolean down)
 {
+#ifdef HALO_XBOX
+	/* port: a demo's held buttons timed by its fixed frames
+	(port/xbox/src/xbox_demo.c) */
+	long now = xbox_demo_milliseconds();
+#else
 	long now = (long)system_milliseconds();
+#endif
 
 	if (!down)
 	{
