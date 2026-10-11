@@ -277,7 +277,8 @@ turn):
 `debug.demo` `"play"` (`--env HALO_DEMO=play`) starts the level from the
 main menu, loads the save once it has loaded, gives the game the readings
 in place of the controller's, and quits when they run out, logging `demo:
-done: N frames, T ticks in M ms, X ms a frame`:
+done: N frames, T ticks in M ms, X ms a frame, Y of the processor's own (W%
+waiting on the GPU)`:
 
     python3 tools/xbox_dev.py run build/xbox/halo --env HALO_DEMO=play --profile 30:40
 
@@ -286,6 +287,13 @@ time, so the game goes the same way however long frames take (a recording
 in xemu goes at its frame rate's share of the game's speed); a reading
 played at another game time than it was taken at means the game went
 another way, and the log says the demo is not comparable.
+
+In xemu the frame's time is mostly the wait on xemu's GPU (b30's demo:
+75 ms a frame, 60-66% of it waiting), and the same build's frame time
+comes out within a few tenths of a millisecond run to run; the processor's
+own time moves 10-15% between runs (xemu runs the processor and the GPU on
+threads of their own), so a change to the processor's work is judged by
+its share in a profile of the same demo rather than by the timing.
 
 ### Joining someone's game over the internet
 
