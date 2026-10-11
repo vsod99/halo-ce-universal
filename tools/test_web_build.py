@@ -181,13 +181,17 @@ def test_the_menus_name_known_platforms_and_match_their_generator():
 
     for path in sorted((ROOT / "port/assets/menus/ce").glob("*.xml")):
         for value in re.findall(r'platform="([^"]*)"', path.read_text()):
-            assert value.split() and set(value.split()) <= {"desktop", "android", "web"}, (path.name, value)
+            assert value.split() and set(value.split()) <= {"desktop", "android", "web", "xbox"}, (path.name, value)
     for name, lines in [*port_settings.settings_files().items(), *port_settings.multiplayer_files().items()]:
         assert (ROOT / "port/assets/menus/ce" / name).read_text() == "\n".join(lines), name
     # the rows a browser has no use for are not on its screens; internet
     # play's is (port/web/src/web_p2p.c)
     network = (ROOT / "port/assets/menus/ce/main_menu.settings_select.player_setup.player_profile_edit."
                "network_setup.xml").read_text()
+    def platforms(row):
+        found = re.search(rf'<child widget="[^"]*/{row}"[^>]*platform="([^"]*)"', network)
+        return set(found.group(1).split()) if found else None
+
     for row in ("op_allow_upnp", "op_join_from_clipboard", "op_auto"):
-        assert re.search(rf'<child widget="[^"]*/{row}"[^>]*platform="desktop android"', network), row
-    assert re.search(r'<child widget="[^"]*/op_online"[^>]*platform="desktop android web"', network)
+        assert platforms(row) and "web" not in platforms(row) and {"desktop", "android"} <= platforms(row), row
+    assert platforms("op_online") and {"desktop", "android", "web"} <= platforms("op_online")
