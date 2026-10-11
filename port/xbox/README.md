@@ -93,9 +93,9 @@ pictures change.
 
 | Unit | What |
 | --- | --- |
-| `nxdk_main.c` | Start-up, before the game's `main`: the log, the hard disk as `E:`, `E:\halo`; Quit goes to the dashboard |
+| `nxdk_main.c` | Start-up, before the game's `main`: the log, the hard disk as `E:`, `E:\halo`, the DVD drive as `R:`; Quit goes to the dashboard |
 | `nxdk_memory.c` | `XPhysicalAlloc` and page protection from the kernel's contiguous memory, and a pool of it set aside before the game state for when the kernel's runs out; the game state as virtual memory at 0x42000000 and the sound cache as virtual memory; Halo Custom Edition's tag cache window at 0x40440000, made of the Xbox tag cache's pages (`cache/physical_memory_map.c` takes the GPU's caches first); the memory left in the log (at start, once the caches are had, and with each `frame N, X fps` line) |
-| `nxdk_posix.c` | File descriptors and the file half of `port/linux/src/posix.h` over nxdk's Windows API; `D:` is the XBE's folder (maps), `E:/halo` the settings and saves |
+| `nxdk_posix.c` | File descriptors and the file half of `port/linux/src/posix.h` over nxdk's Windows API; `D:` is the XBE's folder, `D:\maps` the Halo disc's when that folder has none, `E:/halo` the settings and saves |
 | `nxdk_libc.c` | What pdclib lacks or gets wrong: printf's floating point, `strtod`, `fmod`, `scalbn`, `lrint` (musl's: `port/third_party/musl-stdio`); `memset`, `memcpy` and `memmove` with the string instructions (pdclib's go a byte at a time) |
 | `sdl_files.c` | The SDL file functions `port_config.c` and `menu_files.c` call (`include/SDL3/SDL.h`) |
 | `d3d8_nv2a.c` | The game's Direct3D 8 as NV2A push buffer methods: its vertex shaders (NV2A microcode) and pixel shaders (combiner values) as they are, the simple render states as their own methods, the rest before each draw; textures, vertex buffers and surfaces at their physical addresses; the menus' pictures (PNGs, `port/linux/src/png_decode.c`) for their placeholder textures. `debug.gpu_trace_frame` logs a frame's draws |
@@ -145,6 +145,25 @@ The game's run packs the maps `[game]` names in `xemu.local.toml` (`ui`
 alone by default: the main menu) beside the XBE, as `D:\maps`. Under xemu
 with Cerbios (128 MB) it takes its memory, reads `ui.map` and its menus,
 writes `E:\halo\config.toml`, and draws the main menu on the NV2A.
+
+### The maps from the Halo disc
+
+A player puts the XBE (with `brokers.txt`) in a folder of the hard disk and
+the Halo disc in the drive: when the XBE's folder has no `maps`, the game
+reads `D:\maps` from the disc's (`nxdk_posix.c`; the drive is `R:`,
+`nxdk_main.c`), as the retail game read them, each map once into its cache
+on the hard disk. A `maps` folder copied beside the XBE is used instead, and
+Custom Edition maps stay in the XBE's `custom_maps`. Any version of the disc:
+the PAL maps are played as NTSC's (`port/linux/game/pal_tags.c`). Tried in
+xemu only, whose drive shows an image's files: whether a retail disc's game
+partition can be read by a program started from the hard disk is still to be
+seen on a console.
+
+xemu starts the XBE from the image in its drive, so `--env
+HALO_TEST_FROM_HARD_DISK=1` copies the XBE, `environment.txt` and
+`brokers.txt` to `E:\halo\hard_disk_test` and starts that copy: its `D:` has
+no maps, and the image stands for the disc (the log says `maps: the Halo
+disc's, in the drive`). Blood Gulch, Oct 11: 28-30 fps, as from `D:`.
 
 xemu's keyboard is the controller in port 1 (arrows the D-pad, A B X Y
 those letters, Return Start, E S D F and I J K L the sticks, W and O the

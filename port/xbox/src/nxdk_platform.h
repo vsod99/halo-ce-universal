@@ -12,6 +12,11 @@ the rest of the platform layer, declared without either's types.
 /* port/linux/src/xbox_kernel.c: a line to the log (xbox_log.c) */
 void platform_log(const char *format, ...) __attribute__((format(printf, 1, 2)));
 
+/* the DVD drive (nxdk_main.c mounts it): the Halo disc's maps, when the
+XBE's folder has none (nxdk_posix.c) */
+#define XBOX_DISC_DRIVE 'R'
+#define XBOX_DISC_DRIVE_PATH "R:\\"
+
 /* the game state's virtual memory at its fixed address
 (cache/physical_memory_map.c; nxdk_memory.c) */
 void *xbox_game_state_allocate(unsigned long address, unsigned long size);

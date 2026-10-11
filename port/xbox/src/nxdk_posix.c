@@ -34,7 +34,32 @@ file systems (FATX and ISO 9660) ignore case.
 
 /* ---------- paths */
 
-/* host path to nxdk's: backslashes, and a bare drive ("D:") as its root */
+/* the drive whose maps\ folder D:\maps stands for: D: when the XBE's folder
+has one (maps copied to the hard disk beside it, or the XBE on the disc),
+else the Halo disc's in the drive (nxdk_main.c), read as the retail game
+read it: each map once, into the cache on the hard disk. 0 while neither
+has one, so a disc put in later is found */
+static char maps_drive(void)
+{
+	static volatile char drive;
+
+	if (!drive)
+	{
+		if (GetFileAttributesA("D:\\maps") != INVALID_FILE_ATTRIBUTES)
+		{
+			drive = 'D';
+		}
+		else if (GetFileAttributesA(XBOX_DISC_DRIVE_PATH "maps") != INVALID_FILE_ATTRIBUTES)
+		{
+			drive = XBOX_DISC_DRIVE;
+			platform_log("maps: the Halo disc's, in the drive (the XBE's folder has none)");
+		}
+	}
+	return drive;
+}
+
+/* host path to nxdk's: backslashes, a bare drive ("D:") as its root, and
+D:\maps on the drive that has the maps */
 static int native_path(const char *path, char *native, size_t size)
 {
 	size_t length = strlen(path);
@@ -49,6 +74,11 @@ static int native_path(const char *path, char *native, size_t size)
 		native[index] = path[index] == '/' ? '\\' : path[index];
 	if (length == 2 && native[1] == ':')
 		strcpy(native + 2, "\\");
+	if ((native[0] | 0x20) == 'd' && native[1] == ':' && native[2] == '\\' && !_strnicmp(native + 3, "maps", 4) &&
+		(native[7] == '\0' || native[7] == '\\') && maps_drive())
+	{
+		native[0] = maps_drive();
+	}
 	return 1;
 }
 
