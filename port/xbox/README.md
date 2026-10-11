@@ -78,7 +78,14 @@ Windows and kernel headers.
 
 The link (`build/xbox/halo.exe`, with its DWARF for gdb and a map,
 `halo.exe.map`) is made into the XBE without the debug information, which
-cxbe would otherwise load into memory.
+cxbe would otherwise load into memory. Every function and variable is a
+section of its own, and the link leaves out those nothing uses (`-opt:ref`:
+about 490 KB of the low 64 MB the caches share); identical functions are not
+folded into one. A library's functions must be called directly, not through
+`__declspec(dllimport)` pointers, which the link does not count as uses
+(expat is built with `XML_STATIC`). The XBE's "limit to 64 MB" flag, which
+cxbe always sets, is cleared (`tools/xbox_xbe.py`): with it, a 128 MB
+console gives the program 64 MB.
 
 The menus are the PC version's (`port/assets/menus`), with their pictures
 at the size the original game drew them: `tools/xbox_menu_art.py` (Pillow)
@@ -195,7 +202,8 @@ modified retail BIOS such as Complex 4627 gives the kernel 64 MB even with
 `run` makes the program (`make` in its folder, nxdk's Makefile; `ninja
 xbox` for the game), clears the
 XBE's "limit to 64 MB" flag (cxbe always sets it, and the kernel would give
-the program only 64 MB of a 128 MB console; `memory = "64"` keeps it), packs
+the program only 64 MB of a 128 MB console; the game's build clears it
+itself; `memory = "64"` sets it), packs
 `bin/` into `build/xbox/<name>.iso`, and boots it in xemu with a generated
 configuration: no welcome screen or boot animation, the configured memory,
 NAT networking, the ISO in the drive.

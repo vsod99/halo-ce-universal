@@ -141,21 +141,12 @@ def nxdk_environment(config: dict) -> dict:
     return env
 
 
-# the XBE header's initialization flags (nxdk tools/cxbe/Xbe.h): cxbe always
-# sets "limit development kit run time memory to 64 MB", with which the
-# kernel gives a 128 MB console's program only 64 MB
-XBE_INIT_FLAGS_OFFSET = 0x124
-XBE_INIT_FLAG_LIMIT_64MB = 0x4
-
-
-def set_memory_limit(xbe: Path, limit_64mb: bool) -> None:
-    data = bytearray(xbe.read_bytes())
-    if data[:4] != b"XBEH":
-        sys.exit(f"{xbe} is not an XBE")
-    flags = int.from_bytes(data[XBE_INIT_FLAGS_OFFSET:XBE_INIT_FLAGS_OFFSET + 4], "little")
-    flags = flags | XBE_INIT_FLAG_LIMIT_64MB if limit_64mb else flags & ~XBE_INIT_FLAG_LIMIT_64MB
-    data[XBE_INIT_FLAGS_OFFSET:XBE_INIT_FLAGS_OFFSET + 4] = flags.to_bytes(4, "little")
-    xbe.write_bytes(bytes(data))
+# the XBE header's memory flag (the build clears it; a 64 MB console's
+# settings set it again)
+try:
+    from .xbox_xbe import set_memory_limit
+except ImportError:
+    from xbox_xbe import set_memory_limit
 
 
 def add_maps(config: dict, maps_dir: Path) -> None:

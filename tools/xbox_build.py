@@ -211,11 +211,13 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
     )
     # cxbe makes every section of the PE file a section the kernel loads:
     # the XBE is made from a copy without the debug information, which
-    # halo.exe keeps for gdb
+    # halo.exe keeps for gdb; and cxbe's 64 MB limit cleared, or a 128 MB
+    # console gives the game 64 (tools/xbox_xbe.py)
     n.rule(
         name="xbox_xbe",
         command=("$xbox_objcopy --strip-debug $in $out.exe && "
-                 "$xbox_cxbe -OUT:$out -TITLE:Halo $out.exe > /dev/null && rm $out.exe"),
+                 "$xbox_cxbe -OUT:$out -TITLE:Halo $out.exe > /dev/null && rm $out.exe && "
+                 "$python tools/xbox_xbe.py $out 128"),
         description="XBOX XBE $out",
     )
 
@@ -378,7 +380,7 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
     libs = " ".join(_quote(nxdk_lib / name) for name in config.get("libraries", []))
     ldflags = " ".join(f"-include:{symbol}" for symbol in config.get("include_symbols", []))
     n.build(outputs=exe, rule="xbox_link", inputs=objects, variables={"libs": libs, "ldflags": ldflags})
-    n.build(outputs=xbe, rule="xbox_xbe", inputs=exe)
+    n.build(outputs=xbe, rule="xbox_xbe", inputs=exe, implicit=[Path("tools/xbox_xbe.py")])
     # internet play's MQTT brokers, beside the game (D:; p2p_signal.c)
     brokers = xbe.parent / "brokers.txt"
     n.rule(name="xbox_copy", command="cp $in $out", description="XBOX COPY $out")
