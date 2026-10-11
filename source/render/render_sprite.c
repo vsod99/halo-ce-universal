@@ -418,8 +418,8 @@ void build_sprite(
 
 					if (rotation!=0.f)
 					{
-						rotation_sine = sine(rotation);
-						rotation_cosine = cosine(rotation);
+						/* port: both from one reduction of the angle */
+						sine_cosine(rotation, &rotation_sine, &rotation_cosine);
 					}
 
 					build_sprite_transform_origin_and_direction(

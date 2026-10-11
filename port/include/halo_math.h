@@ -29,6 +29,7 @@ exact in IEEE arithmetic (sqrt, fabs, floor, ceil, fmod) need nothing.
 
 double halo_sin(double x);
 double halo_cos(double x);
+void halo_sincos(double x, double *s, double *c);
 double halo_tan(double x);
 double halo_asin(double x);
 double halo_acos(double x);
@@ -42,6 +43,7 @@ double halo_pow(double x, double y);
 
 #define sin(x) halo_sin(x)
 #define cos(x) halo_cos(x)
+#define sincos(x, s, c) halo_sincos(x, s, c)
 #define tan(x) halo_tan(x)
 #define asin(x) halo_asin(x)
 #define acos(x) halo_acos(x)

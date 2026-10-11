@@ -926,6 +926,20 @@ __inline real cosine(
 	return cos(angle);
 }
 
+/* port: the sine and cosine of one angle, the same as sine() and cosine()
+give, from one reduction of the angle instead of two (port/include/halo_math.h) */
+__inline void sine_cosine(
+	real angle,
+	real *sine_result,
+	real *cosine_result)
+{
+	double sine_value, cosine_value;
+
+	sincos(angle, &sine_value, &cosine_value);
+	*sine_result = (real)sine_value;
+	*cosine_result = (real)cosine_value;
+}
+
 __inline real tangent(
 	real angle)
 {

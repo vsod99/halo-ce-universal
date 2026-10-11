@@ -1,6 +1,6 @@
 # musl-math
 
-The maths functions the game calls (`sin`, `cos`, `tan`, `asin`, `acos`,
+The maths functions the game calls (`sin`, `cos`, `sincos`, `tan`, `asin`, `acos`,
 `atan`, `atan2`, `exp`, `log`, `log2`, `log10`, `pow`), from musl libc,
 MIT licensed (see `COPYRIGHT`).
 

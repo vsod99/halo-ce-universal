@@ -2494,10 +2494,15 @@ real_vector3d *vector3d_from_euler_angles2d(
 	real_vector3d *vector,
 	real_euler_angles2d const *angles)
 {
-	real cosine_pitch = cosine(angles->pitch);
-	vector->i = cosine(angles->yaw)* cosine_pitch;
-	vector->j = sine(angles->yaw)* cosine_pitch;
-	vector->k = sine(angles->pitch);
+	/* port: each angle's sine and cosine from one reduction of it */
+	real sine_pitch, cosine_pitch;
+	real sine_yaw, cosine_yaw;
+
+	sine_cosine(angles->pitch, &sine_pitch, &cosine_pitch);
+	sine_cosine(angles->yaw, &sine_yaw, &cosine_yaw);
+	vector->i = cosine_yaw* cosine_pitch;
+	vector->j = sine_yaw* cosine_pitch;
+	vector->k = sine_pitch;
 	return vector;
 }
 
