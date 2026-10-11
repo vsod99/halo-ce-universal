@@ -75,6 +75,14 @@ long verify_tag_reference(
 	(port/linux/game/custom_edition_cache.c) */
 	if (custom_edition_cache_tags_loaded())
 		return tag_index_is_group(reference->index, reference->group_tag) ? reference->index : NONE;
+#ifdef HALO_RELEASE
+	/* port: a map's references hold the index the search below finds (the
+	assertion after it checks so in the other builds): a release build takes
+	it without the search through every tag's name, which the HUD made for
+	each of its pictures every frame */
+	if (tag_index_is_group(reference->index, reference->group_tag))
+		return reference->index;
+#endif
 	index = tag_loaded(reference->group_tag, reference->name);
 	
 	match_vassert(
