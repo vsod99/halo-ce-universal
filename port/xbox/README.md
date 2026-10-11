@@ -223,6 +223,13 @@ section's checksum made again). The logs come prefixed `[host]` and
 The network tests' tick lines show each machine's view of every player
 (position, health, weapons, score, kills and deaths), to compare.
 
+`--profile START:SECONDS` samples one machine's processor as `run
+--profile` does (`--profile-machine host` or `join`; its `profile.txt` in
+its folder). A co-op host with more enemies:
+
+    python3 tools/xbox_dev.py link b30:coop --env HALO_NET_COOP_ENEMIES_MODE=multiplier \
+        --env HALO_NET_COOP_ENEMIES_MULTIPLIER=4 --profile 100:40
+
 ### Internet play between two Xboxes
 
     python3 tools/xbox_dev.py link bloodgulch --internet --forward
