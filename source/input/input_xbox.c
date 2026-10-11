@@ -120,6 +120,9 @@ symbols in this file:
 #include "input/input_abstraction.h"
 #include "interface/player_ui.h"
 #include "main/console.h"
+#ifdef HALO_XBOX
+#include "xbox_demo.h" /* port: port/xbox/src/xbox_demo.c */
+#endif
 
 /* ---------- constants */
 
@@ -387,6 +390,18 @@ void update_ticks(
 	return;
 }
 
+/* port: the clock held buttons are timed by: on the Xbox, a demo's fixed
+frames (port/xbox/src/xbox_demo.c) */
+static long hold_milliseconds(
+	void)
+{
+#ifdef HALO_XBOX
+	return xbox_demo_milliseconds();
+#else
+	return (long)system_milliseconds();
+#endif
+}
+
 /* The native builds read input once a frame and draw several frames per
 30 Hz tick (port/linux/game/render_interpolation.c), so counting frames would
 make a held button count up as many times too fast: reload would turn into a
@@ -407,11 +422,11 @@ static void update_hold_ticks(
 	else if (*ticks == 0)
 	{
 		*ticks = 1;
-		*down_time = (long)system_milliseconds();
+		*down_time = hold_milliseconds();
 	}
 	else
 	{
-		long held = (long)system_milliseconds() - *down_time;
+		long held = hold_milliseconds() - *down_time;
 
 		held = held < 0 ? 0 : MIN(held, (long)UNSIGNED_CHAR_MAX * 1000 / TICKS_PER_SECOND);
 		*ticks = (byte)PIN(1 + held * TICKS_PER_SECOND / 1000, 2, UNSIGNED_CHAR_MAX);
