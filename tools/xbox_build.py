@@ -58,6 +58,11 @@ XBOX_ABI_FLAGS = [
     "-O2",
     "-g",
     "-gdwarf-4",
+    # every function and variable a section of its own, which the link
+    # leaves out when nothing uses it (-opt:ref): the program shares the
+    # low 64 MB with the caches
+    "-ffunction-sections",
+    "-fdata-sections",
     "-DNXDK",
     "-D__STDC__=1",
     "-Wno-builtin-macro-redefined",
@@ -190,12 +195,16 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
         depfile="$out.d",
         deps="gcc",
     )
-    # nxdk-link's arguments (nxdk/bin/nxdk-link), with the game's stack
+    # nxdk-link's arguments (nxdk/bin/nxdk-link), with the game's stack;
+    # what nothing uses left out (-debug alone would keep it), without
+    # identical functions folded into one (-opt:noicf: code that compares
+    # function pointers must see different ones)
     n.rule(
         name="xbox_link",
         # (ninja quotes the response file's paths for a POSIX shell)
         command=("$xbox_lld -flavor link --rsp-quoting=posix -subsystem:windows -fixed -base:0x00010000 "
-                 f"-stack:{STACK_SIZE:#x} -merge:.edata=.edataxb -debug -map:$out.map $ldflags -out:$out @$out.rsp"),
+                 f"-stack:{STACK_SIZE:#x} -merge:.edata=.edataxb -debug -opt:ref -opt:noicf "
+                 "-map:$out.map $ldflags -out:$out @$out.rsp"),
         description="XBOX LINK $out",
         rspfile="$out.rsp",
         rspfile_content="$in_newline $libs",
@@ -256,6 +265,9 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
         f"-I{TOML_DIR}", f"-I{EXPAT_DIR}", f"-I{ZLIB_DIR}", f"-I{KCP_DIR}", f"-I{MONOCYPHER_DIR}",
         "-Isource -Isource/cseries",
         libc_includes, f"-I{XDK_INCLUDE}",
+        # (expat linked in, not a DLL's: called directly, not through
+        # __imp_ pointers, which lld's -opt:ref does not count as uses)
+        "-DXML_STATIC",
         # pbkit's NV2A method names (nv_regs.h) for the Direct3D device
         # (d3d8_nv2a.c), searched last
         f"-idirafter {_quote(nxdk_lib / 'pbkit')}",
@@ -349,7 +361,7 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
     # salt from nxdk's rand_s (its fallback's process id, which nxdk has no
     # call for, is the one process's)
     for name in EXPAT_SOURCES:
-        add_object(EXPAT_DIR / name, f"{nxdk_cflags} -w -I{EXPAT_DIR} '-DGetCurrentProcessId()=1'")
+        add_object(EXPAT_DIR / name, f"{nxdk_cflags} -w -I{EXPAT_DIR} -DXML_STATIC '-DGetCurrentProcessId()=1'")
     # printf's floating point and strtod, which nxdk's C library lacks
     # (nxdk_libc.c)
     musl_stdio_cflags = " ".join([abi, "-std=gnu11", "-w", f"-include {MUSL_STDIO_DIR}/include/musl_stdio.h",
