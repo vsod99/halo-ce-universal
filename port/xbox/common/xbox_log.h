@@ -24,6 +24,10 @@ void xbox_log(const char *format, ...);
 void xbox_vlog(const char *format, va_list arguments);
 /* text as it is (newlines as the serial port's CR LF) */
 void xbox_log_write(const char *text);
+/* text also handed to tap, as written, from any thread (NULL: none); the
+network's copy of the log (port/xbox/src/nxdk_net.c) */
+typedef void (*xbox_log_tap_function)(const char *text);
+void xbox_log_set_tap(xbox_log_tap_function tap);
 /* ends the run: prints the done marker */
 void xbox_log_done(void);
 

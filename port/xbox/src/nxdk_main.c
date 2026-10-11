@@ -30,6 +30,8 @@ static int xbox_startup(void)
 {
 	int serial = xbox_log_initialize(0);
 
+	/* (kept for the network, debug.log_address: nxdk_net.c) */
+	xbox_log_set_tap(xbox_network_log_tap);
 	platform_log("Halo for the original Xbox (port/xbox), log on %s", serial ? "COM2" : "the screen only");
 	xbox_memory_report("the program loaded");
 	/* E:, the hard disk's first partition: the settings, saves and cache

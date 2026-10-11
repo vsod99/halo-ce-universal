@@ -579,6 +579,11 @@ static const struct config_setting config_settings[] =
 		"sticks are clicked starts and ends a recording during play): its level\n"
 		"from where it was recorded, the same each time, then quits with its\n"
 		"frames and time in the log (port/xbox/README.md)." },
+	{ "debug.log_address", _config_string, "\"\"", "HALO_LOG_ADDRESS", _environment_value, _platform_xbox,
+		"Send the log's lines over the network as UDP datagrams, for a console\n"
+		"without the debug kits' serial port: to this IPv4 address (port 2324,\n"
+		"or address:port), or \"broadcast\" to every machine of the LAN;\n"
+		"tools/xbox_dev.py log shows them. Empty sends none." },
 	{ "debug.start_map", _config_string, "\"\"", "HALO_START_MAP", _environment_value, _platform_all,
 		"Start this map a few seconds into the main menu: a campaign level (\"b30\")\n"
 		"at normal difficulty, as the campaign's menus would, any other\n"

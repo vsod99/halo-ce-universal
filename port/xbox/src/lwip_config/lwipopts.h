@@ -36,6 +36,9 @@ and the transport kept the link-local address it no longer had. */
 each machine, and the datagram ones that find and advertise games (the
 default is 4) */
 #define MEMP_NUM_NETCONN 32
+/* and their datagram ones beside DHCP's, DNS's and the log's (nxdk_net.c)
+(the default is 4) */
+#define MEMP_NUM_UDP_PCB 8
 /* FIONREAD (Winsock's ioctlsocket), SO_RCVBUF and SO_REUSEADDR */
 #define LWIP_SO_RCVBUF 1
 #define SO_REUSE 1

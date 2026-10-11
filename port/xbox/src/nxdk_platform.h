@@ -60,6 +60,9 @@ Ethernet), which XNet's XNADDR carries (p2p_none.c) */
 const unsigned char *xbox_net_ethernet_address(void);
 /* whether the cable is plugged in (XNet's link status: port/linux/src/xnet.c) */
 int xbox_net_link_up(void);
+/* the log's tap (xbox_log.h) that keeps its lines for the network
+(debug.log_address) */
+void xbox_network_log_tap(const char *text);
 
 /* the sound output (nxdk_audio.c, for port/linux/src/dsound_sdl.c): 48 kHz
 stereo, which the mixer writes as floats, frames at a time, from a thread

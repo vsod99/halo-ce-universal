@@ -210,8 +210,16 @@ fails at xemu's exit or the timeout (`--timeout`, 60 s), so it can be
 scripted: the exit status is 0 only for a finished run.
 
 A retail console has no SuperIO chip: there, `xbox_log` finds no serial
-port and writes to the screen only. The plan is for the game to log over
-the network as well, which works on both.
+port, and the game's log goes over the network instead. The setting
+`debug.log_address` (`HALO_LOG_ADDRESS` in `environment.txt` beside the
+XBE) names an IPv4 address, `address:port` (2324 unless given), or
+`broadcast` for every machine of the LAN; the game sends its lines there as
+UDP datagrams (`src/nxdk_net.c`), and `python tools/xbox_dev.py log
+[--save FILE]` on that machine prints them with the console's address. The
+lines from the start are kept (32 KB) until the console has an address;
+with the setting empty, nothing is sent. In xemu, `--env
+HALO_LOG_ADDRESS=10.0.2.2` reaches the Mac through xemu's NAT (checked Oct
+11: the same lines as COM2's, from the first).
 
 xemu's QMP has no `screendump`, since xemu draws with its own renderer:
 `--shot SECONDS` saves xemu's window that long after the program's first

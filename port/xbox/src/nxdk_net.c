@@ -22,6 +22,8 @@ rest (families, types, protocols and the option numbers) are the same.
 
 #include <xboxkrnl/xboxkrnl.h>
 #include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <lwip/api.h>
@@ -33,7 +35,9 @@ rest (families, types, protocols and the option numbers) are the same.
 #include <lwip/tcpip.h>
 
 #include "posix.h"
+#include "port_config.h"
 #include "nxdk_platform.h"
+#include "xbox_log.h"
 
 /* (Winsock's error codes are nxdk's winerror.h's) */
 #define WINSOCK_SOL_SOCKET 0xffff
@@ -525,4 +529,171 @@ int posix_socket_select(int *read, int *read_count, int *write, int *write_count
 	if (result > 0)
 		last_error = 0;
 	return result;
+}
+
+/* ---------- the log over the network */
+
+/* debug.log_address: the log's lines as UDP datagrams, for a console
+without the debug kits' COM2 (port/xbox/common/xbox_log.c), which
+tools/xbox_dev.py log shows. Lines go into a ring from the start (the tap),
+and a thread of its own sends them once the machine has an address and the
+settings say where; with none set, the tap is taken away. A full ring drops
+what comes after, and says how much once there is room. */
+
+#define NETWORK_LOG_PORT 2324
+#define NETWORK_LOG_RING_BYTES (32 * 1024)
+#define NETWORK_LOG_DATAGRAM_BYTES 1400
+
+static struct
+{
+	char ring[NETWORK_LOG_RING_BYTES];
+	/* (bytes ever written and sent: the difference is in the ring) */
+	volatile unsigned long written, sent;
+	volatile unsigned long dropped;
+} network_log;
+
+/* (any thread: the raised IRQL keeps the others out on the one processor) */
+void xbox_network_log_tap(const char *text)
+{
+	unsigned long length = strlen(text);
+	unsigned long index;
+	KIRQL irql = KeRaiseIrqlToDpcLevel();
+
+	if (network_log.written - network_log.sent + length > NETWORK_LOG_RING_BYTES)
+	{
+		network_log.dropped += length;
+	}
+	else
+	{
+		for (index = 0; index < length; index++)
+			network_log.ring[(network_log.written + index) % NETWORK_LOG_RING_BYTES] = text[index];
+		network_log.written += length;
+	}
+	KfLowerIrql(irql);
+}
+
+/* the address and port debug.log_address names; false for none (or a
+mistake, logged) */
+static int network_log_destination(struct sockaddr_in *destination)
+{
+	const char *setting = config_string("debug.log_address");
+	const char *colon = strchr(setting, ':');
+	size_t length = colon ? (size_t)(colon - setting) : strlen(setting);
+	char host[64];
+	ip4_addr_t address;
+
+	if (!*setting)
+		return 0;
+	if (length >= sizeof(host))
+		length = sizeof(host) - 1;
+	memcpy(host, setting, length);
+	host[length] = '\0';
+	memset(destination, 0, sizeof(*destination));
+	destination->sin_len = sizeof(*destination);
+	destination->sin_family = AF_INET;
+	destination->sin_port = lwip_htons(colon ? (u16_t)atoi(colon + 1) : NETWORK_LOG_PORT);
+	if (!strcmp(host, "broadcast"))
+	{
+		destination->sin_addr.s_addr = IPADDR_BROADCAST;
+	}
+	else if (ip4addr_aton(host, &address))
+	{
+		destination->sin_addr.s_addr = ip4_addr_get_u32(&address);
+	}
+	else
+	{
+		platform_log("network log: debug.log_address \"%s\" is not an IPv4 address or \"broadcast\" (either "
+			"with :port)", setting);
+		return 0;
+	}
+	return 1;
+}
+
+/* the dropped bytes' count, zeroed */
+static unsigned long network_log_take_dropped(void)
+{
+	KIRQL irql = KeRaiseIrqlToDpcLevel();
+	unsigned long dropped = network_log.dropped;
+
+	network_log.dropped = 0;
+	KfLowerIrql(irql);
+	return dropped;
+}
+
+static DWORD WINAPI network_log_thread(LPVOID parameter)
+{
+	struct sockaddr_in destination;
+	char datagram[NETWORK_LOG_DATAGRAM_BYTES + 96];
+	int descriptor;
+	int yes = 1;
+
+	(void)parameter;
+	/* the settings are read once the address comes, by when the game has
+	read them (read here first, they would look for the data too early:
+	before the screen asking for the disc, nxdk_main.c) */
+	while (!posix_local_ipv4_address())
+		Sleep(250);
+	if (!network_log_destination(&destination))
+	{
+		xbox_log_set_tap(NULL);
+		return 0;
+	}
+	descriptor = lwip_socket(AF_INET, SOCK_DGRAM, 0);
+	if (descriptor < 0)
+	{
+		xbox_log_set_tap(NULL);
+		platform_log("network log: no socket (%d)", errno);
+		return 0;
+	}
+	lwip_setsockopt(descriptor, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes));
+	platform_log("network log: to %s:%u", ip4addr_ntoa((const ip4_addr_t *)&destination.sin_addr),
+		(unsigned)lwip_ntohs(destination.sin_port));
+	for (;;)
+	{
+		unsigned long available = network_log.written - network_log.sent;
+		unsigned long length = 0;
+		unsigned long dropped;
+
+		if (!available)
+		{
+			Sleep(50);
+			continue;
+		}
+		/* whole lines, as many as fit (a longer one is cut) */
+		while (length < available && length < NETWORK_LOG_DATAGRAM_BYTES)
+		{
+			datagram[length] = network_log.ring[(network_log.sent + length) % NETWORK_LOG_RING_BYTES];
+			length++;
+		}
+		if (length < available)
+		{
+			unsigned long end = length;
+
+			while (end && datagram[end - 1] != '\n')
+				end--;
+			if (end)
+				length = end;
+		}
+		network_log.sent += length;
+		dropped = length == available ? network_log_take_dropped() : 0;
+		if (dropped)
+			length += (unsigned long)snprintf(datagram + length, sizeof(datagram) - length,
+				"network log: %lu bytes of lines dropped (the ring was full)\n", dropped);
+		lwip_sendto(descriptor, datagram, length, 0, (struct sockaddr *)&destination, sizeof(destination));
+	}
+}
+
+__attribute__((constructor)) static void network_log_start(void)
+{
+	HANDLE thread;
+
+	/* (the tap is there from the first line: nxdk_main.c) */
+	thread = CreateThread(NULL, 16 * 1024, network_log_thread, NULL, 0, NULL);
+	if (!thread)
+	{
+		xbox_log_set_tap(NULL);
+		return;
+	}
+	SetThreadPriority(thread, THREAD_PRIORITY_BELOW_NORMAL);
+	CloseHandle(thread);
 }

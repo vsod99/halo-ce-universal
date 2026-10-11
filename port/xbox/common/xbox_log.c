@@ -1,7 +1,7 @@
 /*
 XBOX_LOG.C
 
-Log lines to COM2 and the screen (xbox_log.h).
+Log lines to COM2, the screen and a tap (xbox_log.h).
 
 The SuperIO chip (an SMSC LPC47M157 on the debug kits; xemu's
 -device lpc47m157) is configured through ports 0x2E/0x2F: the enter key
@@ -50,6 +50,7 @@ reads back what was written: a retail console, without the chip, reads back
 
 static int serial_present;
 static int screen_output;
+static volatile xbox_log_tap_function log_tap;
 
 static inline void port_write(unsigned short port, unsigned char value)
 {
@@ -115,6 +116,7 @@ void xbox_log_to_screen(int to_screen)
 void xbox_log_write(const char *text)
 {
 	const char *character;
+	xbox_log_tap_function tap;
 
 	if (serial_present)
 	{
@@ -129,6 +131,15 @@ void xbox_log_write(const char *text)
 	{
 		debugPrint("%s", text);
 	}
+	/* (read once: another thread may take it away) */
+	tap = log_tap;
+	if (tap)
+		tap(text);
+}
+
+void xbox_log_set_tap(xbox_log_tap_function tap)
+{
+	log_tap = tap;
 }
 
 void xbox_vlog(const char *format, va_list arguments)

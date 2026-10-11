@@ -11,6 +11,8 @@
     python tools/xbox_dev.py link MAP --internet
                                              the same over the internet: each on
                                              its own NAT, joining by the invite
+    python tools/xbox_dev.py log             show the log a console sends over the
+                                             network (debug.log_address)
 
 The machine's paths live in port/xbox/xemu.local.toml (not committed; the
 template is port/xbox/xemu.example.toml): nxdk, xemu, and the console files
@@ -1268,6 +1270,34 @@ def run_environment(args: argparse.Namespace) -> list:
     return environment
 
 
+NETWORK_LOG_PORT = 2324
+
+
+def network_log(port: int, save: Path = None) -> None:
+    """prints the log lines consoles send as UDP datagrams (debug.log_address,
+    port/xbox/src/nxdk_net.c), each with its sender's address, until Ctrl+C"""
+    receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    receiver.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    receiver.bind(("", port))
+    print(f"(listening on UDP port {port}: set debug.log_address to this machine's address, or \"broadcast\")",
+          flush=True)
+    output = save.open("a") if save else None
+    try:
+        while True:
+            data, (address, _) = receiver.recvfrom(65536)
+            for line in data.decode("utf-8", "replace").splitlines():
+                text = f"{address}: {line}"
+                print(text, flush=True)
+                if output:
+                    output.write(text + "\n")
+                    output.flush()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if output:
+            output.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1335,7 +1365,13 @@ def main() -> None:
     profile_parser = sub.add_parser("profile", help="write a run's profile.txt again from its samples.json "
                                                     "(halo.exe as it is now)")
     profile_parser.add_argument("run", type=Path, help="the run's folder (build/xbox/runs/...)")
+    log_parser = sub.add_parser("log", help="show the log a console sends over the network (debug.log_address)")
+    log_parser.add_argument("--port", type=int, default=NETWORK_LOG_PORT)
+    log_parser.add_argument("--save", type=Path, help="also append the lines to this file")
     args = parser.parse_args()
+    if args.command == "log":
+        network_log(args.port, args.save)
+        return
     config = load_config()
     if args.command == "profile":
         sampler = Sampler(config, 0, 0, 0, args.run.resolve())
