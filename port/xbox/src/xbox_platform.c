@@ -47,11 +47,11 @@ void platform_display_apply(void)
 }
 
 /* the maps come from the Halo disc or the hard disk (port/xbox/README.md):
-nothing to copy them out of */
+nothing to copy them out of, so the player is asked for the disc */
 BOOL platform_offer_game_data(const char *destination)
 {
 	(void)destination;
-	return FALSE;
+	return xbox_wait_for_maps() ? TRUE : FALSE;
 }
 
 /* the scoreboard's mouse wheel and page keys: none (a closing scoreboard

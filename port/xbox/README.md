@@ -165,6 +165,13 @@ HALO_TEST_FROM_HARD_DISK=1` copies the XBE, `environment.txt` and
 no maps, and the image stands for the disc (the log says `maps: the Halo
 disc's, in the drive`). Blood Gulch, Oct 11: 28-30 fps, as from `D:`.
 
+With neither, the program asks for the Halo disc on pbkit's text screen
+before the game starts, looks in the drive once a second, and goes back to
+the dashboard on B or BACK (`xbox_wait_for_maps`, `nxdk_main.c`). With the
+test above, `--env HALO_TEST_NO_DISC=SECONDS` leaves the drive unlooked at
+for that long after the start, so the screen shows and then gives way to
+the main menu as if the disc had been put in.
+
 xemu's keyboard is the controller in port 1 (arrows the D-pad, A B X Y
 those letters, Return Start, E S D F and I J K L the sticks, W and O the
 triggers). `--press SECONDS:BUTTON,...` presses its buttons that long after

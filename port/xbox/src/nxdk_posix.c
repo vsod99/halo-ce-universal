@@ -34,11 +34,29 @@ file systems (FATX and ISO 9660) ignore case.
 
 /* ---------- paths */
 
+/* whether the disc in the drive is left unlooked at: HALO_TEST_NO_DISC=SECONDS
+leaves it so for that long after the start, a test in xemu (whose drive
+always holds the image the XBE was started from) of the screen asking for
+the disc (nxdk_main.c) */
+static int disc_hidden(void)
+{
+	static long hidden_milliseconds = -1;
+
+	if (hidden_milliseconds < 0)
+	{
+		const char *test = getenv("HALO_TEST_NO_DISC");
+
+		hidden_milliseconds = test ? atol(test) * 1000 : 0;
+	}
+	return hidden_milliseconds && GetTickCount() < (DWORD)hidden_milliseconds;
+}
+
 /* the drive whose maps\ folder D:\maps stands for: D: when the XBE's folder
 has one (maps copied to the hard disk beside it, or the XBE on the disc),
 else the Halo disc's in the drive (nxdk_main.c), read as the retail game
-read it: each map once, into the cache on the hard disk. 0 while neither
-has one, so a disc put in later is found */
+read it: each map once, into the cache on the hard disk. A disc counts only
+with ui.map (another game's may have a maps folder). 0 while neither has
+them, so a disc put in later is found */
 static char maps_drive(void)
 {
 	static volatile char drive;
@@ -49,13 +67,19 @@ static char maps_drive(void)
 		{
 			drive = 'D';
 		}
-		else if (GetFileAttributesA(XBOX_DISC_DRIVE_PATH "maps") != INVALID_FILE_ATTRIBUTES)
+		else if (!disc_hidden() &&
+			GetFileAttributesA(XBOX_DISC_DRIVE_PATH "maps\\ui.map") != INVALID_FILE_ATTRIBUTES)
 		{
 			drive = XBOX_DISC_DRIVE;
 			platform_log("maps: the Halo disc's, in the drive (the XBE's folder has none)");
 		}
 	}
 	return drive;
+}
+
+int xbox_maps_found(void)
+{
+	return maps_drive() != 0;
 }
 
 /* host path to nxdk's: backslashes, a bare drive ("D:") as its root, and

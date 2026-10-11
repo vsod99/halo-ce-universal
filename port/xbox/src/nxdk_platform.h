@@ -16,6 +16,11 @@ void platform_log(const char *format, ...) __attribute__((format(printf, 1, 2)))
 XBE's folder has none (nxdk_posix.c) */
 #define XBOX_DISC_DRIVE 'R'
 #define XBOX_DISC_DRIVE_PATH "R:\\"
+/* whether the XBE's folder or the disc in the drive has the maps (nxdk_posix.c) */
+int xbox_maps_found(void);
+/* when neither has them, asks for the Halo disc until one is put in (true)
+or the player goes back to the dashboard (nxdk_main.c) */
+int xbox_wait_for_maps(void);
 
 /* the game state's virtual memory at its fixed address
 (cache/physical_memory_map.c; nxdk_memory.c) */

@@ -11,8 +11,10 @@ CW_DEFAULT, source/math/real_math.c; port/linux/src/msvc_crt.c), as every
 port's doubles need.
 */
 
+#include <hal/debug.h>
 #include <hal/xbox.h>
 #include <nxdk/mount.h>
+#include <pbkit/pbkit.h>
 #include <xboxkrnl/xboxkrnl.h>
 #include <windows.h>
 #include <stdio.h>
@@ -111,6 +113,111 @@ __attribute__((constructor)) static void xbox_test_from_hard_disk(void)
 	platform_log("hard disk test: starting E:\\halo\\hard_disk_test\\default.xbe");
 	XLaunchXBE("E:\\halo\\hard_disk_test\\default.xbe");
 	platform_log("hard disk test: cannot start it");
+}
+
+/* the folder the XBE was started from, as the dashboards name it (E:\, F:\,
+G:\ for the hard disk's partitions; else the kernel's own name) */
+static void image_folder(char *folder, size_t size)
+{
+	static const struct
+	{
+		const char *device;
+		const char *drive;
+	} drives[] =
+	{
+		{"\\Device\\Harddisk0\\Partition1\\", "E:\\"},
+		{"\\Device\\Harddisk0\\Partition6\\", "F:\\"},
+		{"\\Device\\Harddisk0\\Partition7\\", "G:\\"},
+	};
+	char name[MAX_PATH];
+	size_t length = 0;
+	char *slash;
+	int index;
+
+	if (XeImageFileName->Buffer)
+	{
+		length = XeImageFileName->Length < sizeof(name) - 1 ? XeImageFileName->Length : sizeof(name) - 1;
+		memcpy(name, XeImageFileName->Buffer, length);
+	}
+	name[length] = '\0';
+	slash = strrchr(name, '\\');
+	if (slash)
+		slash[1] = '\0';
+	for (index = 0; index < (int)(sizeof(drives) / sizeof(drives[0])); index++)
+	{
+		size_t prefix = strlen(drives[index].device);
+
+		if (!_strnicmp(name, drives[index].device, prefix))
+		{
+			snprintf(folder, size, "%s%s", drives[index].drive, name + prefix);
+			return;
+		}
+	}
+	snprintf(folder, size, "%s", name);
+}
+
+/* whether B or BACK is down on any controller */
+static int back_pressed(void)
+{
+	unsigned char report[XBOX_GAMEPAD_REPORT_SIZE];
+	unsigned long reports;
+	unsigned long connected = xbox_gamepads_poll();
+	int port;
+
+	for (port = 0; port < 4; port++)
+	{
+		/* (the buttons' word, then the analog buttons: A, B, ...) */
+		if ((connected & (1UL << port)) && xbox_gamepad_report(port, report, &reports) &&
+			((report[0] & 0x20) || report[2 + 1] > 30))
+		{
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/* the screen shown, before the game starts, when neither the XBE's folder
+nor the drive has the maps (port/linux/src/xbox_files.c asks, through
+platform_offer_game_data): pbkit's text screen, which the game's frames
+replace once the maps are found */
+int xbox_wait_for_maps(void)
+{
+	char folder[MAX_PATH];
+	DWORD last_look;
+
+	if (!xbox_gpu_ready())
+		return xbox_maps_found();
+	image_folder(folder, sizeof(folder));
+	platform_log("maps: none beside the XBE (%s) or in the drive; asking for the Halo disc", folder);
+	debugClearScreen();
+	pb_show_debug_screen();
+	debugPrint("\n\n\n"
+		"  Halo's maps were not found.\n\n"
+		"  Put the Halo: Combat Evolved disc in the drive,\n"
+		"  or copy the disc's maps folder to\n"
+		"  %s\n\n\n"
+		"  Press B to go back to the dashboard.\n", folder);
+	last_look = GetTickCount();
+	for (;;)
+	{
+		if (back_pressed())
+		{
+			platform_log("maps: none; back to the dashboard");
+			XLaunchXBE(NULL);
+			return 0;
+		}
+		/* (a look at an empty drive is slow: once a second) */
+		if (GetTickCount() - last_look >= 1000)
+		{
+			last_look = GetTickCount();
+			if (xbox_maps_found())
+				break;
+		}
+		Sleep(50);
+	}
+	platform_log("maps: found; starting");
+	pb_show_front_screen();
+	return 1;
 }
 
 /* the menus' Quit (port/linux/game/menu_functions.c): back to the dashboard */
