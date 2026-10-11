@@ -549,6 +549,11 @@ static const struct config_setting config_settings[] =
 	{ "debug.menu_open", _config_string, "\"\"", "HALO_MENU_OPEN", _environment_value, _platform_all,
 		"Start on this screen of the menus (port/assets/menus) instead of the main\n"
 		"menu, a player profile being edited; empty for the main menu." },
+	{ "debug.demo", _config_string, "\"\"", "HALO_DEMO", _environment_value, _platform_xbox,
+		"\"play\" plays the demo recorded in E:\\halo\\demo.bin (Back held while both\n"
+		"sticks are clicked starts and ends a recording during play): its level\n"
+		"from where it was recorded, the same each time, then quits with its\n"
+		"frames and time in the log (port/xbox/README.md)." },
 	{ "debug.start_map", _config_string, "\"\"", "HALO_START_MAP", _environment_value, _platform_all,
 		"Start this map a few seconds into the main menu: a campaign level (\"b30\")\n"
 		"at normal difficulty, as the campaign's menus would, any other\n"

@@ -401,6 +401,9 @@ symbols in this file:
 #include "tag_files/files.h"
 #include "custom_edition_cache.h" /* port: custom_edition_level_name */
 #include "view_fov.h" /* port: display.fov, before the projection and culling */
+#ifdef HALO_XBOX
+#include "xbox_demo.h" /* port: port/xbox/src/xbox_demo.c */
+#endif
 
 #if defined(HALO_WINDOWS) || defined(HALO_ANDROID) || defined(__linux__)
 #define HALO_NATIVE_BUILD_INFO 1
@@ -3553,6 +3556,14 @@ static boolean main_loop_iteration(
 			profile_scope_exit(main_network_start_frame_section)
 
 			profile_scope(main_update_time_section, main_update_time();)
+#ifdef HALO_XBOX
+			/* port: a demo's frames run a fixed time, for its ticks to come
+			out alike however long the frames take; the half tick over keeps
+			the floor in game_time_update off a tick short */
+			xbox_demo_frame();
+			if (xbox_demo_fixed_frames())
+				main_globals.seconds_elapsed = 1.5f / TICKS_PER_SECOND;
+#endif
 			profile_scope_enter(main_ui_update_section)
 			process_ui_widgets();
 			bink_playback_update();

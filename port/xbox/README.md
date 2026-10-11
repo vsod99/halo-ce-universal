@@ -260,6 +260,33 @@ build (`python3 configure.py --release`): in a 30-player internet game the
 assertions and checked accessors of the default build took the frame rate
 from 15-22 fps to 4-6 in xemu.
 
+A profile is best taken in a scene that moves. A demo (`src/xbox_demo.c`)
+plays the same stretch of a campaign level every time: during play, Back
+held while both sticks are clicked saves the game (the game's core save,
+`E:\halo\z\core\demo.bin`, its z: drive) and records the first controller's every reading
+until the same buttons again, into `E:\halo\demo.bin` on xemu's hard disk.
+It can be played live in xemu's window, or scripted (buttons held together
+are separate `--input`s at one time: those of one `--input` are pressed in
+turn):
+
+    python3 tools/xbox_dev.py run build/xbox/halo --env HALO_START_MAP=b30 \
+        --input '250:back*0.5' --input '250:ls*0.5' --input '250:rs*0.5' \
+        --input '253:lup*24' --input '278:rright*0.5' --input '279:lup*18' \
+        --input '300:back*0.5' --input '300:ls*0.5' --input '300:rs*0.5'
+
+`debug.demo` `"play"` (`--env HALO_DEMO=play`) starts the level from the
+main menu, loads the save once it has loaded, gives the game the readings
+in place of the controller's, and quits when they run out, logging `demo:
+done: N frames, T ticks in M ms, X ms a frame`:
+
+    python3 tools/xbox_dev.py run build/xbox/halo --env HALO_DEMO=play --profile 30:40
+
+While a demo records or plays, each frame runs a tick and a half of game
+time, so the game goes the same way however long frames take (a recording
+in xemu goes at its frame rate's share of the game's speed); a reading
+played at another game time than it was taken at means the game went
+another way, and the log says the demo is not comparable.
+
 ### Joining someone's game over the internet
 
     python3 tools/xbox_dev.py run build/xbox/halo --router-forward \
