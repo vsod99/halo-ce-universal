@@ -36,6 +36,10 @@ played means the game went another way, and the log says so.
 #define DEMO_INPUT_FILE "E:\\halo\\demo.bin"
 /* the game's core save, in its core folder (game_state_xbox.c) */
 #define DEMO_CORE_NAME "demo.bin"
+/* a recording's own, until it ends: then they become the demo's, so that
+one not ended (the console turned off) leaves the last demo whole */
+#define RECORDING_INPUT_FILE "E:\\halo\\demo_recording.bin"
+#define RECORDING_CORE_NAME "demo_recording.bin"
 #define DEMO_MAGIC 0x314D4458UL /* XDM1 */
 /* (at a reading a frame, over 30 minutes at xemu's 10 frames a second) */
 #define MAXIMUM_READINGS 20000
@@ -104,28 +108,29 @@ static long game_time_or_none(void)
 	return game_in_progress() && !main_menu_is_active() ? game_time_get() : -1;
 }
 
-/* the core save's file: z:\core\demo.bin, below the save root
+/* a core save's file: z:\core\<name>, below the save root
 (game_state_xbox.c, xbox_files.c) */
-static const char *core_file(void)
+static const char *core_file(const char *name)
 {
-	static char path[300];
-
+	static char path[2][300];
+	static int which;
 	char *separator;
 
-	snprintf(path, sizeof(path), "%s\\z\\core\\%s", platform_save_root(), DEMO_CORE_NAME);
+	which ^= 1;
+	snprintf(path[which], sizeof(path[which]), "%s\\z\\core\\%s", platform_save_root(), name);
 	/* (the console's paths take backslashes) */
-	for (separator = path; *separator; separator++)
+	for (separator = path[which]; *separator; separator++)
 	{
 		if (*separator == '/')
 			*separator = '\\';
 	}
-	return path;
+	return path[which];
 }
 
 /* the core save's size in bytes, -1 when there is none */
 static long core_size(void)
 {
-	FILE *file = fopen(core_file(), "rb");
+	FILE *file = fopen(core_file(DEMO_CORE_NAME), "rb");
 	long size = -1;
 
 	if (file && !fseek(file, 0, SEEK_END))
@@ -167,7 +172,7 @@ static void load_readings(void)
 	}
 	demo.first_game_time = readings[0].game_time;
 	platform_log("demo: %lu readings of %s from game time %ld; its save %s, %ld bytes", demo.header.count,
-		demo.header.level, demo.first_game_time, core_file(), core_size());
+		demo.header.level, demo.first_game_time, core_file(DEMO_CORE_NAME), core_size());
 }
 
 static void finish_playing(void)
@@ -227,14 +232,22 @@ static void stop_recording(void)
 	}
 	demo.state = _demo_off;
 	demo.header.magic = DEMO_MAGIC;
-	file = fopen(DEMO_INPUT_FILE, "wb");
+	file = fopen(RECORDING_INPUT_FILE, "wb");
 	written = file && fwrite(&demo.header, sizeof(demo.header), 1, file) == 1 &&
 		fwrite(readings, sizeof(readings[0]), demo.header.count, file) == demo.header.count;
 	if (file && fclose(file) != 0)
 		written = FALSE;
+	/* (the recording's save and readings become the demo's together) */
+	if (written)
+	{
+		remove(core_file(DEMO_CORE_NAME));
+		remove(DEMO_INPUT_FILE);
+		written = !rename(core_file(RECORDING_CORE_NAME), core_file(DEMO_CORE_NAME)) &&
+			!rename(RECORDING_INPUT_FILE, DEMO_INPUT_FILE);
+	}
 	platform_log("demo: %lu readings (%ld frames) of %s %s %s; its save %s, %ld bytes", demo.header.count,
 		demo.frames, demo.header.level, written ? "written to" : "could not be written to", DEMO_INPUT_FILE,
-		core_file(), core_size());
+		core_file(DEMO_CORE_NAME), core_size());
 }
 
 static void toggle_recording(void)
@@ -252,7 +265,7 @@ static void toggle_recording(void)
 		demo.header.difficulty = main_get_difficulty();
 		platform_log("demo: recording asked for in %s; saving the game", level);
 		demo.state = _demo_waiting_for_save;
-		main_save_core_name(DEMO_CORE_NAME);
+		main_save_core_name(RECORDING_CORE_NAME);
 	}
 	else if (demo.state == _demo_waiting_for_save || demo.state == _demo_recording)
 	{
