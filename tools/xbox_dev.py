@@ -983,7 +983,8 @@ class RouterForward:
 
 
 def link(config: dict, timeout: float, host_environment: list, join_environment: list, environment: list,
-         headless: bool, internet: bool = False, forward: bool = False, upnp: bool = False) -> int:
+         headless: bool, internet: bool = False, forward: bool = False, upnp: bool = False, profile: str = "",
+         profile_machine: str = "host") -> int:
     """two Xboxes and a cable: the game hosting a system link game
     (debug.network_test host:MAP) and the game joining it, in two xemus
     whose network cards send each other their frames over UDP on this Mac,
@@ -1001,7 +1002,10 @@ def link(config: dict, timeout: float, host_environment: list, join_environment:
     (p2p.c), so forward has the host's router forward its port
     (ForwardedPort). UPnP is off unless upnp: the machines' searches would
     reach the Mac's network through xemu's NAT, and ask its router to
-    forward ports to xemu's address."""
+    forward ports to xemu's address.
+
+    With profile (START:SECONDS), one machine's processor is sampled as
+    run --profile does (its profile.txt in its own folder)."""
     project = ROOT / "build/xbox/halo"
     names = ("host", "join")
     router = ForwardedPort() if internet and forward else None
@@ -1024,6 +1028,11 @@ def link(config: dict, timeout: float, host_environment: list, join_environment:
     statuses = [2, 2]
     invite = []
     invited = threading.Event()
+    sampler = None
+    profiled = names.index(profile_machine) if profile else -1
+    if profile:
+        start_seconds, _, seconds = profile.partition(":")
+        sampler = Sampler(config, free_port(), float(start_seconds), float(seconds or 30), out / profile_machine)
 
     def watch_host(line: str) -> None:
         found = re.search(r"halo://join/[0-9a-f]+", line)
@@ -1051,11 +1060,14 @@ def link(config: dict, timeout: float, host_environment: list, join_environment:
             net = ["backend = 'udp'", "", "[net.udp]", f"bind_addr = '127.0.0.1:{free_udp_port()}'",
                    f"remote_addr = '127.0.0.1:{cable.ports[index]}'"]
         print(f"{name}: Ethernet {address}")
-        machines.append(Xemu(config, isos[index], out / name, headless, files=files, net=net))
+        machines.append(Xemu(config, isos[index], out / name, headless, files=files, net=net,
+                             gdb_port=sampler.port if index == profiled else 0))
 
     def follow(index: int) -> None:
         connection = machines[index].connect(deadline)
         if connection is not None:
+            if index == profiled:
+                sampler.begin()
             statuses[index] = stream_log(connection, out / names[index] / "log.txt", machines[index].process,
                                          deadline, f"[{names[index]}] ", watch_host if index == 0 else None)
     try:
@@ -1316,6 +1328,10 @@ def main() -> None:
                              help="an environment variable for the host alone; repeatable")
     link_parser.add_argument("--join-env", action="append", default=[], metavar="NAME=VALUE",
                              help="an environment variable for the joining machine alone; repeatable")
+    link_parser.add_argument("--profile", default="", metavar="START:SECONDS",
+                             help="sample one machine's processor as run --profile does: profile.txt in its folder")
+    link_parser.add_argument("--profile-machine", choices=("host", "join"), default="host",
+                             help="the machine --profile samples (the host)")
     profile_parser = sub.add_parser("profile", help="write a run's profile.txt again from its samples.json "
                                                     "(halo.exe as it is now)")
     profile_parser.add_argument("run", type=Path, help="the run's folder (build/xbox/runs/...)")
@@ -1334,7 +1350,7 @@ def main() -> None:
     if args.command == "link":
         sys.exit(link(config, args.timeout, [f"HALO_NETWORK_TEST=host:{args.map}"] + args.host_env,
                       ["HALO_NETWORK_TEST=join"] + args.join_env, args.env, args.headless, args.internet,
-                      args.forward, args.upnp))
+                      args.forward, args.upnp, args.profile, args.profile_machine))
     if sys.platform != "darwin":
         mac_only = [flag for flag, used in (("--press", args.press), ("--shot", args.shot), ("--listen", args.listen))
                     if used]
