@@ -282,7 +282,7 @@ with its own environment) and run it from the hard disk
   `brokers.txt` restarts as that build, which finds itself the latest and
   deletes the `.old` files.
 
-Oct 11, xemu: all three as described.
+Oct 11, xemu: all three as described. Oct 12: the question screen with a controller in xemu (the player's own presses), as described.
 
 ### System link between two Xboxes
 
