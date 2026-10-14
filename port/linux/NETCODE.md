@@ -353,7 +353,13 @@ is: a client plays its file of that name and version, so two versions never
 meet. A file's hash is BLAKE2b's (32 bytes) of a label, its size and the
 BLAKE2b hashes of its pieces (256 KiB each); a map is hashed when it is
 needed (a host's game is put on it, a client's settings name its name) and
-kept for the run. No map is renamed. A map downloaded beside another version
+kept for the run. The game's thread never waits for it where its connections
+wait (a large map takes seconds on a slow machine, the original Xbox's
+Extinction longer than they wait): a host's game has no version until map
+sharing's hashing thread has found it, then sends it, and its start waits
+for it (`map_share_level_name_version_pending`); a client checks its files
+against the version, and precaches, once that thread has found their hashes
+(`cache_files_map_version_pending`). No map is renamed. A map downloaded beside another version
 of its name is named for its hash (`hugeass_0e2b3ee4.map`), and the menus
 show it as `Hugeass (2)`; a map an earlier build named so, with no map of
 its name alone beside it, has its name given back as the map lists find it.

@@ -78,6 +78,9 @@ unsigned long cache_files_map_version(
 boolean cache_files_map_present(
 	char const *map_name,
 	unsigned long version);
+boolean cache_files_map_version_pending(
+	char const *map_name,
+	unsigned long version);
 
 unsigned long cache_files_get_checksum(
 	void);

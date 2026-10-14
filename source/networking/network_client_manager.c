@@ -1254,6 +1254,48 @@ boolean network_game_client_idle(
 	return success;
 }
 
+/* port: set while the client's map check waits for its map files' versions
+(cache_files_map_version_pending), which the pregame makes when they are
+known; no precache is reported meanwhile */
+static boolean network_game_client_map_check_pending = FALSE;
+
+/* port: the game's map checked and precached (from
+network_game_client_game_settings_updated); FALSE leaves the game */
+static boolean network_game_client_map_check(
+	char const *map_name,
+	unsigned long version)
+{
+	char build[0x20];
+
+	/* port: a map this machine has not (a Custom Edition map not in
+	its custom_maps folder, or another version of it than the host's,
+	say): the player told which and where to copy it (the main menu's
+	error, in place of the failed join's), and the game left, rather
+	than precaching it, which would give the damaged disc error
+	(cache_files.c) */
+	if (!network_game_is_splitscreen_local() &&
+		!cache_files_map_present(map_name, version))
+	{
+		return FALSE;
+	}
+
+	/* port: a map of a build this version does not play with others
+	(its objects would not be the host's): said, and the game left */
+	if (!network_game_is_splitscreen_local() &&
+		!cache_files_map_plays_multiplayer(map_name, build))
+	{
+		cache_files_show_multiplayer_unavailable(map_name, build);
+		/* (the menu's error the join's, not the connection lost that
+		the failure would otherwise give) */
+		display_error_when_main_menu_loaded(_error_network_failed_to_join_game);
+		return FALSE;
+	}
+	network_event("precaching map '%s'...", map_name);
+	main_set_multiplayer_map_name(map_name);
+
+	return TRUE;
+}
+
 boolean network_game_client_game_settings_updated(
 	struct network_game_client *client,
 	struct network_game *message_packet)
@@ -1287,33 +1329,18 @@ boolean network_game_client_game_settings_updated(
 		if (csstrcmp(message_packet->map.name, client->game.map.name) ||
 			message_packet->map.version != client->game.map.version)
 		{
-			char build[0x20];
-
-			/* port: a map this machine has not (a Custom Edition map not in
-			its custom_maps folder, or another version of it than the host's,
-			say): the player told which and where to copy it (the main menu's
-			error, in place of the failed join's), and the game left, rather
-			than precaching it, which would give the damaged disc error
-			(cache_files.c) */
-			if (!network_game_is_splitscreen_local() &&
-				!cache_files_map_present(message_packet->map.name, (unsigned long)message_packet->map.version))
+			/* port: checked now, else once this machine's map files'
+			versions are known (network_game_client_idle_pregame) */
+			network_game_client_map_check_pending = !network_game_is_splitscreen_local() &&
+				cache_files_map_version_pending(message_packet->map.name, (unsigned long)message_packet->map.version);
+			if (network_game_client_map_check_pending)
+			{
+				network_event("map '%s': this machine's files' versions are being found", message_packet->map.name);
+			}
+			else if (!network_game_client_map_check(message_packet->map.name, (unsigned long)message_packet->map.version))
 			{
 				return FALSE;
 			}
-
-			/* port: a map of a build this version does not play with others
-			(its objects would not be the host's): said, and the game left */
-			if (!network_game_is_splitscreen_local() &&
-				!cache_files_map_plays_multiplayer(message_packet->map.name, build))
-			{
-				cache_files_show_multiplayer_unavailable(message_packet->map.name, build);
-				/* (the menu's error the join's, not the connection lost that
-				the failure would otherwise give) */
-				display_error_when_main_menu_loaded(_error_network_failed_to_join_game);
-				return FALSE;
-			}
-			network_event("precaching map '%s'...", message_packet->map.name);
-			main_set_multiplayer_map_name(message_packet->map.name);
 		}
 
 		csmemcpy(&previous_game, &client->game, sizeof(client->game));
@@ -2251,6 +2278,7 @@ struct network_game_client *network_game_client_create(
 		!network_game_client_dont_use_directly_in_use);
 
 	network_game_client_dont_use_directly_in_use = TRUE;
+	network_game_client_map_check_pending = FALSE; /* port */
 
 	csmemset(
 		&network_game_client_dont_use_directly,
@@ -2900,7 +2928,18 @@ static boolean network_game_client_idle_pregame(
 		if (network_connection_active(client->connection) &&
 			(boolean)network_connection_connected(client->connection))
 		{
-			network_game_client_update_precache_status(client);
+			/* port: the map checked once its files' versions are known
+			(network_game_client_game_settings_updated), and no precache
+			reported until it is */
+			if (network_game_client_map_check_pending &&
+				!cache_files_map_version_pending(client->game.map.name, (unsigned long)client->game.map.version))
+			{
+				network_game_client_map_check_pending = FALSE;
+				if (!network_game_client_map_check(client->game.map.name, (unsigned long)client->game.map.version))
+					return FALSE;
+			}
+			if (!network_game_client_map_check_pending)
+				network_game_client_update_precache_status(client);
 
 			if (!(success = network_connection_idle(client->connection, 15000, NULL)))
 			{

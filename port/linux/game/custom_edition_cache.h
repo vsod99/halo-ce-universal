@@ -118,6 +118,13 @@ boolean custom_edition_map_find_version(
 	char const *level_name,
 	unsigned long version,
 	char *path);
+/* Whether custom_edition_map_find_version would read a map file for the
+level's `version`, the files' hashes still being found on map sharing's
+hashing thread (map_share_map_hash_pending): asked until FALSE, it then
+answers without reading any. */
+boolean custom_edition_map_version_pending(
+	char const *level_name,
+	unsigned long version);
 /* The resource map of `type` (enum resource_map_type: bitmaps.map,
 sounds.map, loc.map) in the first maps folder that has it, into `path` (256
 characters); FALSE if none has it. */

@@ -351,6 +351,10 @@ static boolean custom_edition_map_path(
 		}
 		if (strlen(name) >= MAP_PATH_SIZE)
 			return FALSE;
+		/* (none yet while a file's hash is being found: reading it here would
+		stall the game longer than its connections wait) */
+		if (custom_edition_map_version_pending(map_name, version))
+			return FALSE;
 		custom_edition_version_lookup.found = custom_edition_map_find_version(map_name, version, path);
 		strcpy(custom_edition_version_lookup.name, name);
 		strcpy(custom_edition_version_lookup.path, custom_edition_version_lookup.found ? path : "");
@@ -861,27 +865,49 @@ boolean custom_edition_map_file_named(
 	return custom_edition_map_named(map_name, path);
 }
 
-boolean custom_edition_map_find_version(
+/* whether the map file `path` is of `version`; with `pending`, without
+reading it: set (and FALSE) while its hash is still being found */
+static boolean map_file_is_version(
+	char const *path,
+	unsigned long version,
+	boolean *pending)
+{
+	unsigned long found_version;
+
+	if (pending && map_share_map_hash_pending(path))
+	{
+		*pending = TRUE;
+		return FALSE;
+	}
+	return map_share_map_version(path, &found_version) && found_version == version;
+}
+
+/* custom_edition_map_find_version; with `pending`, the files it would read
+looked at in the same order without reading any, `pending` set at the first
+whose hash is still being found */
+static boolean map_find_version(
 	char const *level_name,
 	unsigned long version,
-	char *path)
+	char *path,
+	boolean *pending)
 {
 	char const *name = tag_name_strip_path(level_name);
 	char pattern[MAP_PATH_SIZE];
 	char digits[MAP_SHARE_NAME_DIGITS + 1];
 	WIN32_FIND_DATAA data;
 	HANDLE find;
-	unsigned long found_version;
 	boolean found = FALSE;
 	short folder;
 
 	for (folder = 0; folder < NUMBER_OF_MAPS_FOLDERS; folder++)
 	{
 		if (maps_folder_has(maps_folder(folder), name, MAP_FILE_EXTENSION, path) &&
-			map_share_map_version(path, &found_version) && found_version == version)
+			map_file_is_version(path, version, pending))
 		{
 			return TRUE;
 		}
+		if (pending && *pending)
+			return FALSE;
 	}
 	/* (custom_maps' other versions of the name: the one whose name ends in
 	the version's digits, if its hash is that) */
@@ -910,11 +936,33 @@ boolean custom_edition_map_find_version(
 			continue;
 		}
 		sprintf(path, "%s%s%s", maps_folder(0), file_name, MAP_FILE_EXTENSION);
-		found = map_share_map_version(path, &found_version) && found_version == version;
-	} while (!found && FindNextFileA(find, &data));
+		found = map_file_is_version(path, version, pending);
+	} while (!found && !(pending && *pending) && FindNextFileA(find, &data));
 	CloseHandle(find);
 
 	return found;
+}
+
+boolean custom_edition_map_find_version(
+	char const *level_name,
+	unsigned long version,
+	char *path)
+{
+	return map_find_version(level_name, version, path, NULL);
+}
+
+boolean custom_edition_map_version_pending(
+	char const *level_name,
+	unsigned long version)
+{
+	char path[MAP_PATH_SIZE];
+	boolean pending = FALSE;
+
+	if (!version || !custom_edition_level_name(level_name) || strlen(tag_name_strip_path(level_name)) >= MAP_PATH_SIZE)
+		return FALSE;
+	map_find_version(level_name, version, path, &pending);
+
+	return pending;
 }
 
 boolean custom_edition_resource_map_file_path(

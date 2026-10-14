@@ -1061,6 +1061,18 @@ unsigned long cache_files_map_version(
 	return custom_edition_level_name(map_name) ? custom_edition_map_version(map_name) : 0;
 }
 
+/* port: whether cache_files_map_present cannot yet answer without reading
+the map's files for their versions, their hashes still being found on map
+sharing's hashing thread (port/linux/game/map_share_files.c): seconds for a
+large map on a slow machine, longer than the game's connections wait. A
+client holds its map check and precache until it can. */
+boolean cache_files_map_version_pending(
+	char const *map_name,
+	unsigned long version)
+{
+	return map_name && custom_edition_level_name(map_name) && custom_edition_map_version_pending(map_name, version);
+}
+
 /* port: whether this machine has the map a network game is on (a client
 joining it: network_client_manager.c); when not, tells the player which map
 is missing and where to copy it, in the error the main menu shows next,

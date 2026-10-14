@@ -51,6 +51,9 @@ enum
 	MAXIMUM_NAMED = 1024,
 	/* the maps' hashes kept this run (map_share_map_hash) */
 	MAXIMUM_KNOWN_HASHES = 64,
+	/* the maps waiting for the hashing thread to find their hashes
+	(map_share_map_hash_pending) */
+	MAXIMUM_WANTED_HASHES = 8,
 	/* the longest map file name the map lists take (custom_edition_maps.c:
 	the level name, custom_maps\ and it, kept whole by the game engine) */
 	MAXIMUM_MAP_NAME_LENGTH = CUSTOM_EDITION_MAXIMUM_LEVEL_NAME_LENGTH - (sizeof(CUSTOM_EDITION_LEVEL_NAME_PREFIX) - 1),
@@ -73,6 +76,10 @@ enum
 	_hash_job_name,
 	/* a download's pieces (map_share_pieces_hash) */
 	_hash_job_pieces,
+	/* a host's map, for its version (map_share_level_name_choose) */
+	_hash_job_version,
+	/* a map's hash, asked for without waiting (map_share_map_hash_pending) */
+	_hash_job_known,
 };
 
 /* ---------- structures */
@@ -100,6 +107,8 @@ written, so that it is read once */
 struct known_hash
 {
 	boolean used;
+	/* the file could not be read: no hash */
+	boolean failed;
 	char path[MAP_SHARE_PATH_SIZE];
 	unsigned long size;
 	unsigned long modified;
@@ -123,10 +132,16 @@ struct map_share_files_globals
 	/* the maps' hashes found, and the next of them to replace */
 	struct known_hash known[MAXIMUM_KNOWN_HASHES];
 	short next_known;
+	/* the maps whose hashes were asked for without waiting, in turn */
+	short wanted_count;
+	char wanted[MAXIMUM_WANTED_HASHES][MAP_SHARE_PATH_SIZE];
 	/* the level name a host's game was last given, and its map's version
 	(map_share_level_name_choose) */
 	char chosen_level[MAP_SHARE_PATH_SIZE];
 	unsigned long chosen_version;
+	/* while its file is hashed on the thread, and which file */
+	boolean chosen_pending;
+	char chosen_path[MAP_SHARE_PATH_SIZE];
 
 	/* the maps to give their names back, and those looked at already
 	(folder and name) */
@@ -511,7 +526,8 @@ static struct known_hash *known_hash_find(
 	return NULL;
 }
 
-void map_share_map_hash_remember(
+/* the file's hash kept, or (`hash` NULL) that it could not be read */
+static void known_hash_store(
 	char const *path,
 	byte const *hash)
 {
@@ -544,16 +560,28 @@ void map_share_map_hash_remember(
 		known->size = size;
 		known->modified = modified;
 	}
-	csmemcpy(known->hash, hash, MAP_SHARE_HASH_BYTES);
+	known->failed = hash == NULL;
+	if (hash)
+		csmemcpy(known->hash, hash, MAP_SHARE_HASH_BYTES);
+	else
+		csmemset(known->hash, 0, MAP_SHARE_HASH_BYTES);
 }
 
-boolean map_share_map_hash(
+void map_share_map_hash_remember(
+	char const *path,
+	byte const *hash)
+{
+	known_hash_store(path, hash);
+}
+
+/* a map file's hash, if it is known without reading the file: found this
+run, or the catalog's */
+static boolean map_share_map_hash_known(
 	char const *path,
 	byte *hash)
 {
 	struct map_share_files_globals *globals = &map_share_files_globals;
 	struct known_hash const *known;
-	struct hash_job job;
 	unsigned long size;
 	unsigned long modified;
 	short index;
@@ -564,7 +592,7 @@ boolean map_share_map_hash(
 	if (known)
 	{
 		csmemcpy(hash, known->hash, MAP_SHARE_HASH_BYTES);
-		return TRUE;
+		return !known->failed;
 	}
 	/* (one the catalog hashed for sharing) */
 	for (index = 0; index < MAXIMUM_SHARE_FILES; index++)
@@ -579,7 +607,27 @@ boolean map_share_map_hash(
 			return TRUE;
 		}
 	}
-	/* (read here: a map takes a fraction of a second) */
+	return FALSE;
+}
+
+boolean map_share_map_hash(
+	char const *path,
+	byte *hash)
+{
+	struct hash_job job;
+	unsigned long size;
+	unsigned long modified;
+
+	if (!file_stamp(path, &size, &modified) || size > MAXIMUM_FILE_BYTES)
+		return FALSE;
+	if (map_share_map_hash_known(path, hash))
+		return TRUE;
+	/* (one the thread could not read) */
+	if (known_hash_find(path, size, modified))
+		return FALSE;
+	/* (read here: a map takes a fraction of a second on a desktop, seconds
+	on a slow machine: map_share_map_hash_pending first, where the game's
+	connections wait) */
 	csmemset(&job, 0, sizeof(job));
 	csstrncpy(job.path, path, sizeof(job.path) - 1);
 	hash_job_run(&job);
@@ -588,6 +636,41 @@ boolean map_share_map_hash(
 		return FALSE;
 	csmemcpy(hash, job.hash, MAP_SHARE_HASH_BYTES);
 	map_share_map_hash_remember(path, hash);
+	return TRUE;
+}
+
+boolean map_share_map_hash_pending(
+	char const *path)
+{
+	struct map_share_files_globals *globals = &map_share_files_globals;
+	unsigned long size;
+	unsigned long modified;
+	byte hash[MAP_SHARE_HASH_BYTES];
+	short index;
+
+	/* (no file, or one known: map_share_map_hash answers at once) */
+	if (!file_stamp(path, &size, &modified) || size > MAXIMUM_FILE_BYTES ||
+		known_hash_find(path, size, modified) || map_share_map_hash_known(path, hash))
+	{
+		return FALSE;
+	}
+	if ((globals->job_type == _hash_job_known || globals->job_type == _hash_job_version) &&
+		!csstrcasecmp(globals->job.path, path))
+	{
+		return TRUE;
+	}
+	for (index = 0; index < globals->wanted_count; index++)
+	{
+		if (!csstrcasecmp(globals->wanted[index], path))
+			return TRUE;
+	}
+	/* (a full queue takes it when asked again) */
+	if (globals->wanted_count < MAXIMUM_WANTED_HASHES && csstrlen(path) < MAP_SHARE_PATH_SIZE)
+	{
+		csstrncpy(globals->wanted[globals->wanted_count], path, MAP_SHARE_PATH_SIZE - 1);
+		globals->wanted[globals->wanted_count][MAP_SHARE_PATH_SIZE - 1] = 0;
+		globals->wanted_count++;
+	}
 	return TRUE;
 }
 
@@ -776,14 +859,18 @@ void map_share_level_name_choose(
 	char name[MAP_SHARE_PATH_SIZE];
 	char digits[MAP_SHARE_NAME_DIGITS + 1];
 	byte hash[MAP_SHARE_HASH_BYTES];
+	boolean hash_known;
 	long length;
 
 	globals->chosen_level[0] = 0;
-	if (!level_name || !custom_edition_level_name(level_name) || !custom_edition_map_file_named(level_name, path) ||
-		!map_share_map_hash(path, hash))
-	{
+	globals->chosen_pending = FALSE;
+	if (!level_name || !custom_edition_level_name(level_name) || !custom_edition_map_file_named(level_name, path))
 		return;
-	}
+	/* (a hash not found yet is found on the hashing thread, not here: a large
+	map takes seconds on a slow machine, the original Xbox's 98 MB
+	Extinction longer than the game's connections wait, and the game has
+	no version until then: map_share_level_name_version_pending) */
+	hash_known = map_share_map_hash_known(path, hash);
 	/* the map's own name: its file's, without a hash it ends in (another
 	version's, or one of before) if that is its hash's */
 	csstrncpy(name, tag_name_strip_path(path), sizeof(name) - 1);
@@ -792,9 +879,12 @@ void map_share_level_name_choose(
 	if (length <= 0)
 		return;
 	name[length] = 0;
-	map_share_hash_digits(hash, digits);
-	if (map_share_name_hashed(name) && !csstrcmp(name + length - MAP_SHARE_NAME_DIGITS, digits))
-		length -= MAP_SHARE_NAME_DIGITS + 1;
+	if (hash_known)
+	{
+		map_share_hash_digits(hash, digits);
+		if (map_share_name_hashed(name) && !csstrcmp(name + length - MAP_SHARE_NAME_DIGITS, digits))
+			length -= MAP_SHARE_NAME_DIGITS + 1;
+	}
 	if (length <= 0 || csstrlen(CUSTOM_EDITION_LEVEL_NAME_PREFIX) + length >= (unsigned long)size ||
 		csstrlen(CUSTOM_EDITION_LEVEL_NAME_PREFIX) + length >= sizeof(globals->chosen_level))
 	{
@@ -802,6 +892,16 @@ void map_share_level_name_choose(
 	}
 	csprintf(level_name, "%s%.*s", CUSTOM_EDITION_LEVEL_NAME_PREFIX, (int)length, name);
 	csstrncpy(globals->chosen_level, level_name, sizeof(globals->chosen_level) - 1);
+	if (!hash_known)
+	{
+		globals->chosen_version = 0;
+		globals->chosen_pending = TRUE;
+		csstrncpy(globals->chosen_path, path, sizeof(globals->chosen_path) - 1);
+		globals->chosen_path[sizeof(globals->chosen_path) - 1] = 0;
+		error(_error_silent, "map sharing: the game's map is %s (%s, its version found on the hashing thread)",
+			level_name, path);
+		return;
+	}
 	globals->chosen_version = map_share_hash_version(hash);
 	error(_error_silent, "map sharing: the game's map is %s (%s, version %08lx)", level_name, path,
 		globals->chosen_version);
@@ -815,8 +915,39 @@ boolean map_share_level_name_version(
 
 	if (!level_name || !globals->chosen_level[0] || csstrcasecmp(globals->chosen_level, level_name))
 		return FALSE;
-	*version = globals->chosen_version;
+	/* (none yet while it is being hashed) */
+	*version = globals->chosen_pending ? 0 : globals->chosen_version;
 	return TRUE;
+}
+
+boolean map_share_level_name_version_pending(
+	char const *level_name)
+{
+	struct map_share_files_globals *globals = &map_share_files_globals;
+
+	return level_name && globals->chosen_level[0] && globals->chosen_pending &&
+		!csstrcasecmp(globals->chosen_level, level_name);
+}
+
+/* the host's map's version, once its hash is known (a hash that cannot be
+found leaves the game without one, as a map of before map sharing) */
+static void chosen_version_found(
+	boolean found,
+	byte const *hash)
+{
+	struct map_share_files_globals *globals = &map_share_files_globals;
+
+	globals->chosen_pending = FALSE;
+	globals->chosen_version = found ? map_share_hash_version(hash) : 0;
+	if (found)
+	{
+		error(_error_silent, "map sharing: the game's map %s is version %08lx", globals->chosen_level,
+			globals->chosen_version);
+	}
+	else
+	{
+		error(_error_silent, "map sharing: '%s' could not be read for its version", globals->chosen_path);
+	}
 }
 
 /* ---------- the hashing thread's work */
@@ -867,6 +998,14 @@ void map_share_files_update(
 			naming_finish(&globals->job_naming, &globals->job);
 			free(globals->job.piece_hashes);
 			break;
+		case _hash_job_version:
+		case _hash_job_known:
+			known_hash_store(globals->job.path, globals->job.failed ? NULL : globals->job.hash);
+			/* (chosen again meanwhile: another file's, hashed next) */
+			if (globals->job_type == _hash_job_version && globals->chosen_pending && !csstrcasecmp(globals->chosen_path, globals->job.path))
+				chosen_version_found(!globals->job.failed, globals->job.hash);
+			free(globals->job.piece_hashes);
+			break;
 		case _hash_job_pieces:
 			free(globals->pieces_hashes);
 			globals->pieces_done = TRUE;
@@ -880,8 +1019,49 @@ void map_share_files_update(
 		globals->job_type = _hash_job_none;
 	}
 
-	/* the next: a download's pieces, a file to share, then a map to give
-	its name back */
+	/* the next: a host's map's version, which its game waits for, the
+	hashes asked for without waiting, which a client's game waits for, a
+	download's pieces, a file to share, then a map to give its name back */
+	if (globals->chosen_pending)
+	{
+		byte hash[MAP_SHARE_HASH_BYTES];
+		unsigned long size;
+		unsigned long modified;
+
+		/* (found meanwhile: the catalog's, say; or found unreadable) */
+		if (map_share_map_hash_known(globals->chosen_path, hash))
+		{
+			chosen_version_found(TRUE, hash);
+		}
+		else if (!file_stamp(globals->chosen_path, &size, &modified) || known_hash_find(globals->chosen_path, size, modified))
+		{
+			chosen_version_found(FALSE, NULL);
+		}
+		else if (hash_job_start(_hash_job_version, globals->chosen_path, NONE))
+		{
+			return;
+		}
+		else
+		{
+			chosen_version_found(FALSE, NULL);
+		}
+	}
+	while (globals->wanted_count > 0)
+	{
+		char path[MAP_SHARE_PATH_SIZE];
+		unsigned long size;
+		unsigned long modified;
+
+		csmemcpy(path, globals->wanted[0], sizeof(path));
+		globals->wanted_count--;
+		csmemmove(&globals->wanted[0], &globals->wanted[1], globals->wanted_count * sizeof(globals->wanted[0]));
+		/* (gone, or found meanwhile) */
+		if (!file_stamp(path, &size, &modified) || known_hash_find(path, size, modified))
+			continue;
+		if (hash_job_start(_hash_job_known, path, NONE))
+			return;
+		known_hash_store(path, NULL);
+	}
 	if (globals->pieces_wanted)
 	{
 		globals->pieces_wanted = FALSE;

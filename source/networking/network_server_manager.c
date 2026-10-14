@@ -4857,6 +4857,32 @@ static boolean network_game_server_idle_pregame_tasks(
 			}
 		}
 
+		/* port: a Custom Edition map's version, once map sharing has hashed
+		its file on its thread (map_share_level_name_choose), sent as the
+		lobby's other settings are; the machines precache again, as for a
+		new map, having checked their files against it */
+		{
+			unsigned long version;
+
+			if (!map_share_level_name_version_pending(server->game.map.name) &&
+				map_share_level_name_version(server->game.map.name, &version) &&
+				server->game.map.version != (long)version)
+			{
+				server->game.map.version = (long)version;
+				for (itr = 0; itr < MAXIMUM_NETWORK_MACHINE_COUNT; itr++)
+				{
+					struct network_game_server_client_machine *client_machine = &server->client_machines[itr];
+
+					if (client_machine->machine_index >= 0 &&
+						client_machine->machine_index < MAXIMUM_NETWORK_MACHINE_COUNT)
+					{
+						SET_FLAG(client_machine->flags, _network_client_machine_precached_bit, FALSE);
+					}
+				}
+				network_game_server_send_game_data_pregame(server);
+			}
+		}
+
 		/* send the lobby changes collected since the last settings update */
 		network_game_server_flush_game_data_pregame(server);
 
@@ -4903,10 +4929,13 @@ static boolean network_game_server_idle_pregame_tasks(
 					sizeof(server->countdown_state));
 				send_countdown_update = TRUE;
 			}
+			/* port: and once the map's version is known, which the
+			machines check their files against */
 			else if (countdown_timer_get_time_remaining(
 				&server->countdown_state.timer) == 0 &&
 				network_game_server_have_all_machines_have_precached(server) &&
-				server->countdown_state.paused == FALSE)
+				server->countdown_state.paused == FALSE &&
+				!map_share_level_name_version_pending(server->game.map.name))
 			{
 				/* (the game stays open: a machine may join it in progress,
 				network_game_server_start_late_joiner) */

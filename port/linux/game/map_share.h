@@ -83,10 +83,15 @@ kept for map_share_level_name_version (network_server_manager.c). */
 void map_share_level_name_choose(
 	char *level_name,
 	long size);
-/* the version of the map that level name was last made for, if it was */
+/* the version of the map that level name was last made for, if it was (0
+while it is pending) */
 boolean map_share_level_name_version(
 	char const *level_name,
 	unsigned long *version);
+/* whether that map's version is still being found: its file hashed on the
+hashing thread, which a game on it waits for before it starts */
+boolean map_share_level_name_version_pending(
+	char const *level_name);
 
 /* A map file's hash, read here once (a fraction of a second) and kept for
 the rest of the run, by its path, size and the time it was written. FALSE
@@ -94,6 +99,12 @@ if it cannot be read. */
 boolean map_share_map_hash(
 	char const *path,
 	byte *hash);
+/* Whether a map file's hash is still being found: not known yet, and asked
+of the hashing thread, so that map_share_map_hash, which reads the file
+where its hash is not known (seconds, on a slow machine), answers at once
+when this says FALSE. */
+boolean map_share_map_hash_pending(
+	char const *path);
 /* ... a hash known otherwise (a download's) kept */
 void map_share_map_hash_remember(
 	char const *path,
