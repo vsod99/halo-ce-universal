@@ -169,21 +169,32 @@ static boolean cheats_network_client_rasterizer_enforce(
 /* port: a client in another's game plays by the host's rules: none of its
 own cheats, its own game speed or its own changes to how players play, nor
 what its drawing shows it that others' does not, set before it joined too
-(after, hs_compile_and_evaluate refuses them); each frame and each tick */
+(after, hs_compile_and_evaluate refuses them); each frame and each tick.
+How players play is put back once, as it joins: after that only the map's
+scripts change it, as they do the host's (Extinction's set rider_ejection),
+and putting it back each frame would play by other rules than the host's */
 void cheats_network_client_enforce(
 	void)
 {
 	static struct cheat_globals const none = { 0 };
-	boolean changed;
+	static boolean was_client = FALSE;
+	boolean changed = FALSE;
 
 	if (!network_game_distributed_client())
+	{
+		was_client = FALSE;
 		return;
-	changed = csmemcmp(&cheat, &none, sizeof(cheat)) != 0 || !rider_ejection || !player_autoaim_flag ||
-		!player_magnetism_flag;
+	}
+	if (!was_client)
+	{
+		changed = !rider_ejection || !player_autoaim_flag || !player_magnetism_flag;
+		rider_ejection = TRUE;
+		player_autoaim_flag = TRUE;
+		player_magnetism_flag = TRUE;
+		was_client = TRUE;
+	}
+	changed |= csmemcmp(&cheat, &none, sizeof(cheat)) != 0;
 	csmemset(&cheat, 0, sizeof(cheat));
-	rider_ejection = TRUE;
-	player_autoaim_flag = TRUE;
-	player_magnetism_flag = TRUE;
 	changed |= game_time_reset_speed();
 	changed |= cheats_network_client_rasterizer_enforce();
 	if (changed)

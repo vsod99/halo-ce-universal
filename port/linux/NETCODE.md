@@ -212,11 +212,13 @@ A client plays by its host's rules: in another's game (searching for it,
 in its lobby, or playing it) the developer console, the telnet console
 and the cheat buttons run only commands that change nothing of the game
 (what the machine shows and how its controls feel: `hs_compile_and_evaluate`),
-and each frame and tick the game's cheats, speed, autoaim, magnetism and
-rider ejection are put back to the host's, and what it draws of the world
-to what everyone's draws (no wireframe, debug drawing mode, environment
-left out, fog, grass or water off), as set before joining too
-(`cheats_network_client_enforce`); its camera stays the player's own
+and each frame and tick the game's cheats and speed are put back to the
+host's, and what it draws of the world to what everyone's draws (no
+wireframe, debug drawing mode, environment left out, fog, grass or water
+off), as set before joining too (`cheats_network_client_enforce`); autoaim,
+magnetism and rider ejection are put back once, as it joins, after which
+only the map's scripts change them, as they do the host's (Extinction's
+set rider ejection); its camera stays the player's own
 (no flying or following camera). The host keeps its own.
 
 The host also finds a client whose game runs faster than time (a speed
