@@ -7,6 +7,7 @@
  "ce/port/main_menu/multiplayer_type_select/lobby/header_add_player.png": "f6576fbfbc52cd91a359fdf867d0421d316d83ba7ee9382b7f5603e405f7dc73 512x64",
  "ce/port/main_menu/multiplayer_type_select/lobby/header_lobby.png": "e39878a56e6b5d2ffcd7ab07dd2461ad574bd7fa4d2972a039ddf8a95d8b62c9 512x64",
  "ce/port/main_menu/multiplayer_type_select/server_settings/coop_options/header_coop_options.png": "8210a18dabed7d419fafa99fc18d0c00be8b86c3c1255f847c61d1bfaa046aa8 512x64",
+ "ce/port/main_menu/multiplayer_type_select/server_settings/map_share_options/header_map_share_options.png": "c80419009dec4256698ab439daed8e6ed5171a5eda112bcd9b488c943c25fabf 512x64",
  "ce/port/main_menu/multiplayer_type_select/server_settings/voice_options/header_voice_options.png": "c0de2d58ca57e5412525b397bbd59bb88139b6d57249a8f5443e01fb6c56c647 512x64",
  "ce/port/pause/pausebox_center__0.png": "00d3d4602f45ec3d77b53d203d4fa64cdf9611aff0201d380594f1e8c4ced569 4x256",
  "ce/port/pause/pausebox_center__1.png": "3f1bd32420b3293d216c62630fa7eb177e0656880663c472c00072b34cc5c078 4x256",

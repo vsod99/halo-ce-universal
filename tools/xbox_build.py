@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .linux_build import (EXPAT_DIR, KCP_DIR, MBEDTLS_DIR, MINIUPNPC_DEFINES, MINIUPNPC_DIR, MONOCYPHER_DIR, MUSL_MATH_DIR,
-                          TOML_DIR, XDK_INCLUDE, ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES, compile_launcher,
+                          STB_VORBIS_SOURCE, TOML_DIR, XDK_INCLUDE, ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES, compile_launcher,
                           game_defines_and_includes, game_sources, miniupnpc_sources, musl_math_sources,
                           updater_defines, xdk_headers)
 from .embed_assets import xbox_menu_inputs
@@ -258,6 +258,7 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
         add_object(source, game_cflags)
     for source in sorted(Path(linux_config["game_sources"]).glob("*.c")):
         add_object(source, game_cflags)
+    add_object(STB_VORBIS_SOURCE, game_cflags)
     game_objects = objects[game_objects_start:]
 
     platform_cflags = " ".join([

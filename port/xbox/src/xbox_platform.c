@@ -246,6 +246,12 @@ void hud_hires_register_placeholder(long asset, unsigned long const *texture)
 	(void)texture;
 }
 
+/* (the NV2A renderer keeps no GL texture names to forget) */
+void xgpu_gl_texture_deleted(unsigned int texture)
+{
+	(void)texture;
+}
+
 /* (the menus' bitmaps: the renderer's, once it has one) */
 unsigned int hud_hires_png_texture(const void *png, unsigned long size, unsigned long *levels)
 {
@@ -255,10 +261,11 @@ unsigned int hud_hires_png_texture(const void *png, unsigned long size, unsigned
 	return 0;
 }
 
-long text_hires_font(char const *tag_name, float cap_height, float oversample)
+long text_hires_font(char const *tag_name, float cap_height, short const *letter_widths, float oversample)
 {
 	(void)tag_name;
 	(void)cap_height;
+	(void)letter_widths;
 	(void)oversample;
 	return -1;
 }
