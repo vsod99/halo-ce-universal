@@ -302,8 +302,13 @@ def generate_xbox_build(n: Writer, sln: Any) -> None:
     def add_nxdk_object(source: Path) -> None:
         obj = obj_dir / "nxdk" / source.relative_to(nxdk_lib).with_suffix(".o")
         objects.append(obj)
+        cflags = f"{lwip_cflags} -w"
+        # (its driver started by nxdk_net.c's xbox_nvnetdrv_init, which gives
+        # the NIC's frames to lwIP as copies, not its zero-copy buffers)
+        if source.name == "nvnetdrv_lwip.c":
+            cflags += " -Dnvnetdrv_init=xbox_nvnetdrv_init"
         n.build(outputs=obj, rule="xbox_cc", inputs=source, implicit=[PORT_DIR / "src" / "lwip_config" / "lwipopts.h"],
-                variables={"cflags": f"{lwip_cflags} -w"})
+                variables={"cflags": cflags})
 
     for source in lwip_sources(nxdk_lib):
         add_nxdk_object(source)

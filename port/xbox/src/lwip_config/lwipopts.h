@@ -46,6 +46,16 @@ default is 4) */
 (nxdk_upnp.c) give up on one that does not answer */
 #define LWIP_SO_RCVTIMEO 1
 #define LWIP_SO_SNDTIMEO 1
+/* the frames the NIC receives, copied out of its buffers into these
+(xbox_nvnetdrv_init, nxdk_net.c), a frame to a buffer: as many as a TCP
+window, which a game that reads nothing for a while (loading a map) leaves
+lwIP holding, and the datagrams that come meanwhile; when they run out, a
+frame is dropped and lwIP lets go of what it holds out of order. lwIP's
+default is 16 of 1488 bytes. (nvnetdrv_lwip.c also takes the count for the
+NIC's send descriptors.) */
+#define PBUF_POOL_SIZE 48
+#define PBUF_POOL_BUFSIZE 1536
+
 /* the platform layer calls lwip_socket and the rest by those names */
 #define LWIP_COMPAT_SOCKETS 0
 #define LWIP_POSIX_SOCKETS_IO_NAMES 0

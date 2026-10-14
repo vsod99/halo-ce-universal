@@ -31,6 +31,8 @@ rest (families, types, protocols and the option numbers) are the same.
 #include <lwip/dns.h>
 #include <lwip/netif.h>
 #include <lwip/netifapi.h>
+#include <lwip/pbuf.h>
+#include <lwip/stats.h>
 #include <lwip/sockets.h>
 #include <lwip/tcpip.h>
 
@@ -38,6 +40,7 @@ rest (families, types, protocols and the option numbers) are the same.
 #include "port_config.h"
 #include "nxdk_platform.h"
 #include "xbox_log.h"
+#include "nvnetdrv.h"
 
 /* (Winsock's error codes are nxdk's winerror.h's) */
 #define WINSOCK_SOL_SOCKET 0xffff
@@ -49,6 +52,51 @@ struct netif *g_pnetif;
 static struct netif ethernet;
 static BOOL network_started;
 static unsigned char ethernet_address[6];
+
+/* ---------- the frames received */
+
+/* The NIC's receive buffers, which nxdk's driver lends lwIP for as long as
+lwIP holds a frame (nvnetdrv_lwip.c: zero-copy), are taken back at once
+here: each frame is copied into lwIP's pool (lwipopts.h) as it comes. Lent,
+they ran out while a game read nothing for a while (a large map loading, 14
+s) and the host's backlog came in at once, and xemu's NIC, whose ring was
+full, never received again (it does not look at its ring again when the
+driver gives buffers back); a console's drops frames until it has some. */
+enum
+{
+	/* the NIC's ring: only between the frame's arrival and its copy now
+	(nxdk's default, a TCP window's, was 64) */
+	ETHERNET_RECEIVE_BUFFERS = 32,
+};
+
+static void ethernet_received(void *buffer, uint16_t length)
+{
+	struct pbuf *frame = pbuf_alloc(PBUF_RAW, (u16_t)(length + ETH_PAD_SIZE), PBUF_POOL);
+
+	if (frame)
+		pbuf_take_at(frame, buffer, length, ETH_PAD_SIZE);
+	nvnetdrv_rx_release(buffer);
+	/* (the pool spent: dropped, as a full ring would, and lwIP lets go of
+	what it holds out of order) */
+	if (!frame)
+	{
+		LINK_STATS_INC(link.memerr);
+		LINK_STATS_INC(link.drop);
+		return;
+	}
+	LINK_STATS_INC(link.recv);
+	if (ethernet.input(frame, &ethernet) != ERR_OK)
+		pbuf_free(frame);
+}
+
+/* (nvnetdrv_lwip.c's call to nvnetdrv_init, by tools/xbox_build.py: its own
+callback and ring size not taken) */
+int xbox_nvnetdrv_init(size_t rx_buffer_count, nvnetdrv_rx_callback_t rx_callback, size_t tx_queue_size)
+{
+	(void)rx_buffer_count;
+	(void)rx_callback;
+	return nvnetdrv_init(ETHERNET_RECEIVE_BUFFERS, ethernet_received, tx_queue_size);
+}
 
 /* ---------- starting the network */
 
