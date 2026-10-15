@@ -75,6 +75,14 @@ symbols in this file:
 #include "structure_vector_tests.h"
 #include "structures.h"
 
+#ifdef HALO_XBOX
+/* port: the Xbox finds this file's tag block elements inline (the clusters
+a moving object or light touches, sphere_intersects_cluster_portal: a
+firefight's every projectile, each tick) */
+#undef TAG_BLOCK_GET_ELEMENT
+#define TAG_BLOCK_GET_ELEMENT TAG_BLOCK_GET_ELEMENT_INLINE
+#endif
+
 /* ---------- constants */
 
 enum
