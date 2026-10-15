@@ -177,6 +177,41 @@ static int local_address_setting(unsigned long *address)
 	return 1;
 }
 
+/* debug.network_test_clients (port/linux/game/network_test_clients.c): the
+address a test client's sockets are bound to while it makes and connects
+them (network byte order), in place of INADDR_ANY and of network.address;
+0 when none is */
+static unsigned long test_client_address;
+
+void xnet_test_client_bind_address(unsigned long address)
+{
+#ifdef HALO_XBOX
+	/* (lwIP's loopback interface takes 127.0.0.1 alone: each test client's
+	address an interface of its own, nxdk_net.c) */
+	extern int xbox_net_add_loopback_address(unsigned long address);
+
+	if (address)
+		xbox_net_add_loopback_address(address);
+#endif
+	test_client_address = address;
+}
+
+/* with test clients, the game's datagram sockets share their ports: a test
+client's on its own address beside this machine's own client's on every
+address (the host sends each client's datagrams to the client's port) */
+static int test_clients_share_ports(void)
+{
+	static int checked;
+	static int share;
+
+	if (!checked)
+	{
+		checked = 1;
+		share = config_integer("debug.network_test_clients") > 0;
+	}
+	return share;
+}
+
 /* 127.0.0.1 in network byte order */
 static unsigned long loopback_address(void)
 {
@@ -395,14 +430,25 @@ int WSAAPI halo_ws_bind(SOCKET socket, const struct sockaddr *address, int addre
 
 	if (address && address->sa_family == AF_INET && address_length >= (int)sizeof(local) &&
 		((const struct sockaddr_in *)address)->sin_addr.s_addr == INADDR_ANY &&
-		local_address_setting(&override))
+		(test_client_address || local_address_setting(&override)))
 	{
 		memcpy(&local, address, sizeof(local));
-		local.sin_addr.s_addr = override;
+		local.sin_addr.s_addr = test_client_address ? test_client_address : override;
 		address = (const struct sockaddr *)&local;
 	}
+	if (test_clients_share_ports())
+	{
+		int type = SOCK_STREAM;
+		int type_length = sizeof(type);
+		int share = 1;
+
+		posix_socket_getsockopt((int)socket, SOL_SOCKET, SO_TYPE, &type, &type_length);
+		if (type == SOCK_DGRAM)
+			posix_socket_setsockopt((int)socket, SOL_SOCKET, SO_REUSEADDR, &share, sizeof(share));
+	}
 	result = posix_socket_bind((int)socket, address, address_length);
-	if (result == 0)
+	/* (a test client's sockets are no ports for internet play's peers) */
+	if (result == 0 && !test_client_address)
 		note_socket_port(socket, 0);
 	return winsock_result(result);
 }
@@ -432,7 +478,7 @@ int WSAAPI halo_ws_connect(SOCKET socket, const struct sockaddr *address, int ad
 	}
 	/* a connection from an unbound socket would leave from whichever address
 	the route picks; with network.address it leaves from that address */
-	if (address && address->sa_family == AF_INET && local_address_setting(&override))
+	if (address && address->sa_family == AF_INET && (test_client_address || local_address_setting(&override)))
 	{
 		struct sockaddr_in bound;
 		int bound_length = sizeof(bound);
@@ -442,7 +488,7 @@ int WSAAPI halo_ws_connect(SOCKET socket, const struct sockaddr *address, int ad
 		{
 			memset(&bound, 0, sizeof(bound));
 			bound.sin_family = AF_INET;
-			bound.sin_addr.s_addr = override;
+			bound.sin_addr.s_addr = test_client_address ? test_client_address : override;
 			posix_socket_bind((int)socket, &bound, sizeof(bound));
 		}
 	}
@@ -451,7 +497,8 @@ int WSAAPI halo_ws_connect(SOCKET socket, const struct sockaddr *address, int ad
 	/* the port the system gave it (a connection under way has one too, and
 	a datagram socket's that failed keeps its: a stream socket's that failed
 	has none) */
-	note_socket_port(socket, 0);
+	if (!test_client_address)
+		note_socket_port(socket, 0);
 	if (result < 0)
 	{
 		WSASetLastError(error);

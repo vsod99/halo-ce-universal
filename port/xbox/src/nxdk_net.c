@@ -148,6 +148,73 @@ __attribute__((constructor)) static void network_start(void)
 		ethernet_address[5]);
 }
 
+/* ---------- test clients' addresses */
+
+/* debug.network_test_clients (port/linux/game/network_test_clients.c): each
+test client joins its own host from an address of its own, 127.0.0.2 and on
+(the host tells machines apart by their addresses). lwIP's loopback
+interface takes datagrams to 127.0.0.1 alone, so each address is an
+interface of its own, which lwIP routes first (the newest) and loops back
+(ip4_output_if: a datagram to an interface's own address); the host's
+answers come from that address, which the client talks to. */
+enum
+{
+	MAXIMUM_LOOPBACK_ADDRESSES = 32,
+};
+
+static struct netif loopback_addresses[MAXIMUM_LOOPBACK_ADDRESSES];
+static int loopback_address_count;
+
+/* (nothing goes out of it but to its own address, looped back before this) */
+static err_t loopback_address_output(struct netif *netif, struct pbuf *p, const ip4_addr_t *address)
+{
+	(void)netif;
+	(void)p;
+	(void)address;
+	return ERR_OK;
+}
+
+static err_t loopback_address_init(struct netif *netif)
+{
+	netif->name[0] = 't';
+	netif->name[1] = 'c';
+	netif->mtu = 0;
+	netif->output = loopback_address_output;
+	return ERR_OK;
+}
+
+/* the address (network byte order) this machine's own, on an interface of
+its own; 0 if there is no room for another */
+int xbox_net_add_loopback_address(unsigned long address)
+{
+	ip4_addr_t ip;
+	ip4_addr_t mask;
+	ip4_addr_t gateway;
+	int index;
+
+	for (index = 0; index < loopback_address_count; index++)
+	{
+		if (ip4_addr_get_u32(netif_ip4_addr(&loopback_addresses[index])) == address)
+			return 1;
+	}
+	if (!network_started || loopback_address_count >= MAXIMUM_LOOPBACK_ADDRESSES)
+		return 0;
+	ip4_addr_set_u32(&ip, address);
+	ip4_addr_set_u32(&mask, 0xffffffffUL);
+	ip4_addr_set_zero(&gateway);
+	if (netifapi_netif_add(&loopback_addresses[loopback_address_count], &ip, &mask, &gateway, NULL,
+		loopback_address_init, tcpip_input) != ERR_OK)
+	{
+		platform_log("network: could not add the address %lu.%lu.%lu.%lu", address & 0xff, (address >> 8) & 0xff,
+			(address >> 16) & 0xff, address >> 24);
+		return 0;
+	}
+	netifapi_netif_set_link_up(&loopback_addresses[loopback_address_count]);
+	netifapi_netif_set_up(&loopback_addresses[loopback_address_count]);
+	loopback_address_count++;
+	return 1;
+}
+
 const unsigned char *xbox_net_ethernet_address(void)
 {
 	return ethernet_address;

@@ -82,6 +82,8 @@ void network_distributed_item_statistics(long *creates, long *deletes, long *fai
 void network_damage_statistics(long *sent_reports, long *dealt_reports, long *rejected_reports, long *replayed_events);
 /* xinput_sdl.c's */
 void test_input_hold_action(int hold);
+/* network_test_clients.c's */
+void network_test_clients_update(void);
 /* menu_functions.c's */
 void pc_menu_start_map(char const *map_name);
 /* main.c's */
@@ -813,6 +815,10 @@ void network_test_update(
 	}
 	if (network_test.mode == _network_test_off)
 		return;
+
+	/* debug.network_test_clients: machines inside the host joining its game */
+	if (network_test.mode == _network_test_host)
+		network_test_clients_update();
 
 	/* the game running: report (from the start of each game: the next
 	game's time starts over) */

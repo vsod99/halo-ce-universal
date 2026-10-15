@@ -522,6 +522,13 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"The network test's host lists its game in the server browser, as Create\n"
 		"Game > Internet's PUBLIC does (debug.network_test \"browse\" joins it)." },
+	{ "debug.network_test_clients", _config_integer, "0", "HALO_NETWORK_TEST_CLIENTS", _environment_value,
+		_platform_all,
+		"The network test's host is joined by this many test clients inside it\n"
+		"(port/linux/game/network_test_clients.c), a second apart once its game\n"
+		"runs: each a machine of its own from 127.0.0.2 on, with one player\n"
+		"wandering and shooting, which reads and counts what the host sends it, to\n"
+		"measure a host with many machines; 0 none." },
 	{ "debug.telnet_console", _config_boolean, "false", "HALO_TELNET_CONSOLE", _environment_set_is_true, _platform_all,
 		"Listen on 127.0.0.1 (port telnet_console_port) for a script console that\n"
 		"runs what it is sent as the game's console does, with no password; false\n"

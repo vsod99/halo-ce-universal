@@ -747,6 +747,12 @@ button on the scores does). `debug.network_test_public` lists the host's
 game in the server browser, and `browse` joins the one listed there with the
 most players (not co-op, if it can), as the server browser does
 (port/web/tests/internet.mjs plays the native build and browsers so).
+`debug.network_test_clients` has the host's game joined by that many test
+clients inside the host (`port/linux/game/network_test_clients.c`): machines
+on loopback addresses of their own (127.0.0.2 and on) that join in progress
+with a client's messages, play one player each (walking, turning, jumping)
+and count what the host sends them, logged every ten seconds, so that a host
+of a large game is measured on one machine with the host's code unchanged.
 `debug.network_latency` and
 `debug.network_loss` hold back what a machine receives and drop some of its
 datagrams, to test as over the internet. `debug.network_corrupt` damages

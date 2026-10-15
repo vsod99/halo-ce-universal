@@ -33,9 +33,13 @@ and the transport kept the link-local address it no longer had. */
 #define LWIP_NETIF_STATUS_CALLBACK 1
 
 /* the sockets of a system link game: its listening one, a connection for
-each machine, and the datagram ones that find and advertise games (the
-default is 4) */
-#define MEMP_NUM_NETCONN 32
+each machine, and the datagram ones that find and advertise games, about ten
+besides the machines' (the default is 4). The socket table is the one fixed
+count here (nxdk's lwIP takes its pools from the heap, MEMP_MEM_MALLOC): 128
+entries, a few KB, for a host's machines and the test clients that stand in
+for them, three sockets each (port/linux/game/network_test_clients.c); 32
+ran out at the seventh. */
+#define MEMP_NUM_NETCONN 128
 /* and their datagram ones beside DHCP's, DNS's and the log's (nxdk_net.c)
 (the default is 4) */
 #define MEMP_NUM_UDP_PCB 8
