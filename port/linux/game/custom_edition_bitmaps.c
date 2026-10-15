@@ -1034,6 +1034,12 @@ void custom_edition_texture_cache_full(
 	return;
 }
 
+boolean custom_edition_textures_limited(
+	void)
+{
+	return custom_edition_texture_limit != 0;
+}
+
 boolean custom_edition_bitmap_oversized(
 	struct bitmap_data *bitmap,
 	long size)

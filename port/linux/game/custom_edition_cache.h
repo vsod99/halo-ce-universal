@@ -279,7 +279,9 @@ texture larger than 256 pixels and game.custom_edition_reduce_detail allows
 it, makes it its next level down (half its width and height) for the rest of
 the map and returns TRUE; else FALSE. custom_edition_texture_cache_full: the
 cache had no room for a texture. custom_edition_bitmap_oversized: whether,
-since then, `bitmap` (of `size` bytes in the cache) is to be made smaller. */
+since then, `bitmap` (of `size` bytes in the cache) is to be made smaller;
+custom_edition_textures_limited: whether any is (so that a texture's size
+need not be worked out each time it is drawn, while none is). */
 struct bitmap_data;
 boolean custom_edition_bitmap_reduce(
 	struct bitmap_data *bitmap);
@@ -288,6 +290,8 @@ void custom_edition_texture_cache_full(
 boolean custom_edition_bitmap_oversized(
 	struct bitmap_data *bitmap,
 	long size);
+boolean custom_edition_textures_limited(
+	void);
 
 /* ---------- prototypes/CUSTOM_EDITION_SCRIPTS.C */
 

@@ -1087,9 +1087,13 @@ void *_texture_cache_bitmap_get_hardware_format(
 			}
 			/* port: a Custom Edition map's texture too large for a cache
 			that has run out of room goes, once the GPU is done with it, to
-			load again smaller (port/linux/game/custom_edition_bitmaps.c) */
+			load again smaller (port/linux/game/custom_edition_bitmaps.c); its
+			size worked out only while there is a limit (each texture set
+			worked out every mipmap's: about 5% of an Xbox client's time in a
+			17-player game) */
 			else if (load &&
 				cached_texture->loaded &&
+				custom_edition_textures_limited() &&
 				custom_edition_bitmap_oversized(bitmap, rasterizer_xbox_bitmap_get_pixel_data_size(bitmap)) &&
 				!IDirect3DBaseTexture8_IsBusy(&cached_texture->hardware_format))
 			{
