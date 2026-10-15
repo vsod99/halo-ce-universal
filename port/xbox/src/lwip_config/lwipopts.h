@@ -40,6 +40,11 @@ entries, about 10 KB, for a host's 127 other machines and the test clients
 that stand in for them, three sockets each
 (port/linux/game/network_test_clients.c); 32 ran out at the seventh. */
 #define MEMP_NUM_NETCONN 400
+/* what lwIP holds of the kernel's pool (nxdk's mem_malloc), counted for
+the frame rate's log line (nxdk_net.c xbox_net_lwip_kb): a size before each
+allocation. A host's buffers for many clients grow there, beside what the
+kernel itself needs of the pool for the map's reads. */
+#define MEM_STATS 1
 /* and their datagram ones beside DHCP's, DNS's and the log's (nxdk_net.c)
 (the default is 4) */
 #define MEMP_NUM_UDP_PCB 8

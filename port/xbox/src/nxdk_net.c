@@ -222,6 +222,13 @@ int xbox_net_add_loopback_address(unsigned long address)
 	return 1;
 }
 
+/* (nxdk's lwIP takes all of its memory from the kernel's pool, through
+mem_malloc, which counts it: lwipopts.h) */
+unsigned long xbox_net_lwip_kb(void)
+{
+	return (unsigned long)lwip_stats.mem.used / 1024;
+}
+
 const unsigned char *xbox_net_ethernet_address(void)
 {
 	return ethernet_address;

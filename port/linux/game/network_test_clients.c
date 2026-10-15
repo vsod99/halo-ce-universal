@@ -672,12 +672,14 @@ static void test_clients_report(
 	}
 	if (elapsed > 0 && in_game)
 	{
-		long seconds_tenths = elapsed * 10 / TICKS_PER_SECOND;
+		/* (kbit/s each: in floating point, as ten seconds of 50 clients' bytes
+		in bits overflow a long) */
+		double each = (double)elapsed / TICKS_PER_SECOND * 1024.0 / 8.0 * in_game;
 
-		platform_log("test clients: %d of %d in the game (%d failed); the host sent each %ld kbit/s over its "
-			"connection, %ld kbit/s in datagrams (%ld datagrams a second to them all since they began)", in_game, test_clients.count,
-			failed, (stream_bytes - test_clients.reported_stream_bytes) * 8 * 10 / 1024 / seconds_tenths / in_game,
-			(datagram_bytes - test_clients.reported_datagram_bytes) * 8 * 10 / 1024 / seconds_tenths / in_game,
+		platform_log("test clients: %d of %d in the game (%d failed); the host sent each %.0f kbit/s over its "
+			"connection, %.0f kbit/s in datagrams (%ld datagrams a second to them all since they began)", in_game,
+			test_clients.count, failed, (double)(stream_bytes - test_clients.reported_stream_bytes) / each,
+			(double)(datagram_bytes - test_clients.reported_datagram_bytes) / each,
 			datagrams * TICKS_PER_SECOND / MAX(1, game_time_get() - test_clients.started_time));
 	}
 	test_clients.reported_stream_bytes = stream_bytes;

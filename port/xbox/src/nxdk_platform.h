@@ -64,6 +64,8 @@ Ethernet), which XNet's XNADDR carries (p2p_none.c) */
 const unsigned char *xbox_net_ethernet_address(void);
 /* whether the cable is plugged in (XNet's link status: port/linux/src/xnet.c) */
 int xbox_net_link_up(void);
+/* what lwIP holds of the kernel's pool, its buffers among it (KB) */
+unsigned long xbox_net_lwip_kb(void);
 /* the log's tap (xbox_log.h) that keeps its lines for the network
 (debug.log_address) */
 void xbox_network_log_tap(const char *text);
