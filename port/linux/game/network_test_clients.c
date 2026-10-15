@@ -22,8 +22,8 @@ machine's own client; the Xbox makes each address an interface of lwIP's,
 nxdk_net.c). It asks to join, adds one
 player, says it has loaded when the host starts it, asks for the host's
 objects, and from then on sends its player's input every tick: walking and
-strafing in circles, turning, firing every three seconds, jumping every
-five, throwing a grenade every seven (as debug.test_input's bot plays a
+strafing in circles, turning, firing bursts every three seconds, jumping
+every five, throwing a grenade every seven (as debug.test_input's bot plays a
 controller). It reads everything the host sends it and counts it, but loads
 nothing, predicts nothing and reports no hits: the host simulates its player
 from the input alone.
@@ -63,7 +63,8 @@ void xnet_test_client_bind_address(unsigned long address);
 
 enum
 {
-	MAXIMUM_TEST_CLIENTS = 30,
+	/* every machine of a game but the host's own */
+	MAXIMUM_TEST_CLIENTS = HALO_PORT_MAXIMUM_NETWORK_MACHINES - 1,
 	/* the first's address: 127.0.0.2 (127.0.0.1 is this machine's own client's) */
 	FIRST_TEST_CLIENT_ADDRESS = IPV4_LOOPBACK_ADDRESS + 1,
 	/* (the game's own, network_client_manager.c) */
@@ -171,7 +172,8 @@ static struct
 	long report_time;
 	long reported_stream_bytes;
 	long reported_datagram_bytes;
-	struct test_client clients[MAXIMUM_TEST_CLIENTS];
+	/* (made for the count, when there are any) */
+	struct test_client *clients;
 } test_clients;
 
 /* ---------- sending */
@@ -256,7 +258,15 @@ static void test_client_action(
 	double t = (double)tick / TICKS_PER_SECOND + client_index * 1.7;
 	double yaw = fmod(t * 0.4 + client_index, 2.0 * _pi);
 	unsigned long control_flags = 0;
+	/* (bursts of shots: a tap every 0.4 s for half of every three seconds,
+	which a semi-automatic weapon such as the plasma pistol fires once a
+	press, and which do not charge it) */
+	boolean firing = fmod(t, 3.0) < 1.5 && fmod(t, 0.4) < 0.1;
 
+	/* (the trigger is its bit as well as how far it is pulled, as a
+	controller's is: player_control.c) */
+	if (firing)
+		control_flags |= FLAG(_unit_control_weapon_primary_trigger_bit);
 	if (fmod(t, 5.0) < 0.1)
 		control_flags |= FLAG(_unit_control_jump_bit);
 	if (fmod(t, 7.0) < 0.2)
@@ -267,7 +277,7 @@ static void test_client_action(
 	action->desired_facing.pitch = (real)(sin(t * 0.3) * 0.3);
 	action->throttle.i = (real)sin(t * 0.9);
 	action->throttle.j = (real)(cos(t * 0.6 + client_index) * 0.6);
-	action->primary_trigger = fmod(t, 3.0) < 0.3 ? 1.0f : 0.0f;
+	action->primary_trigger = firing ? 1.0f : 0.0f;
 	action->desired_weapon_index = NONE;
 	action->desired_grenade_index = NONE;
 	action->desired_zoom_level = NONE;
@@ -685,6 +695,16 @@ void network_test_clients_update(
 	{
 		test_clients.checked = TRUE;
 		test_clients.count = (short)PIN(config_integer("debug.network_test_clients"), 0, MAXIMUM_TEST_CLIENTS);
+		if (test_clients.count)
+		{
+			test_clients.clients = debug_malloc(test_clients.count * sizeof(struct test_client), TRUE, __FILE__,
+				__LINE__);
+			if (!test_clients.clients)
+			{
+				platform_log("test clients: no memory for %d", test_clients.count);
+				test_clients.count = 0;
+			}
+		}
 	}
 	if (!test_clients.count)
 		return;

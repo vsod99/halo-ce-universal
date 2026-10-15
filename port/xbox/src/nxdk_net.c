@@ -159,10 +159,12 @@ interface of its own, which lwIP routes first (the newest) and loops back
 answers come from that address, which the client talks to. */
 enum
 {
-	MAXIMUM_LOOPBACK_ADDRESSES = 32,
+	/* a game's machines (HALO_PORT_MAXIMUM_NETWORK_MACHINES) */
+	MAXIMUM_LOOPBACK_ADDRESSES = 128,
 };
 
-static struct netif loopback_addresses[MAXIMUM_LOOPBACK_ADDRESSES];
+/* (made as they are asked for: none in a game without test clients) */
+static struct netif *loopback_addresses[MAXIMUM_LOOPBACK_ADDRESSES];
 static int loopback_address_count;
 
 /* (nothing goes out of it but to its own address, looped back before this) */
@@ -192,26 +194,31 @@ int xbox_net_add_loopback_address(unsigned long address)
 	ip4_addr_t gateway;
 	int index;
 
+	struct netif *netif;
+
 	for (index = 0; index < loopback_address_count; index++)
 	{
-		if (ip4_addr_get_u32(netif_ip4_addr(&loopback_addresses[index])) == address)
+		if (ip4_addr_get_u32(netif_ip4_addr(loopback_addresses[index])) == address)
 			return 1;
 	}
-	if (!network_started || loopback_address_count >= MAXIMUM_LOOPBACK_ADDRESSES)
+	if (!network_started || loopback_address_count >= MAXIMUM_LOOPBACK_ADDRESSES ||
+		!(netif = calloc(1, sizeof(*netif))))
+	{
 		return 0;
+	}
 	ip4_addr_set_u32(&ip, address);
 	ip4_addr_set_u32(&mask, 0xffffffffUL);
 	ip4_addr_set_zero(&gateway);
-	if (netifapi_netif_add(&loopback_addresses[loopback_address_count], &ip, &mask, &gateway, NULL,
-		loopback_address_init, tcpip_input) != ERR_OK)
+	if (netifapi_netif_add(netif, &ip, &mask, &gateway, NULL, loopback_address_init, tcpip_input) != ERR_OK)
 	{
 		platform_log("network: could not add the address %lu.%lu.%lu.%lu", address & 0xff, (address >> 8) & 0xff,
 			(address >> 16) & 0xff, address >> 24);
+		free(netif);
 		return 0;
 	}
-	netifapi_netif_set_link_up(&loopback_addresses[loopback_address_count]);
-	netifapi_netif_set_up(&loopback_addresses[loopback_address_count]);
-	loopback_address_count++;
+	netifapi_netif_set_link_up(netif);
+	netifapi_netif_set_up(netif);
+	loopback_addresses[loopback_address_count++] = netif;
 	return 1;
 }
 
