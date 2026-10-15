@@ -136,6 +136,24 @@ static long lruv_cache_bytes_to_pages(
 
 /* ---------- globals */
 
+/* ---------- private code */
+
+/* port: a block of the cache's list (which holds only blocks in use), in a
+release build found where datum_get finds it without the call: lruv_block_new
+walks every block of the cache for each block it makes, and each decal of a
+firefight is one (2.7% of an Xbox client's time in a 17-player game) */
+static __inline__ struct lruv_cache_block *lruv_cache_listed_block(
+	struct lruv_cache *cache,
+	long block_index)
+{
+#ifdef HALO_RELEASE
+	return (struct lruv_cache_block *)((byte *)cache->blocks->data +
+		cache->blocks->size * (short)block_index);
+#else
+	return datum_get(cache->blocks, block_index);
+#endif
+}
+
 /* ---------- public code */
 
 long lruv_allocation_size(
@@ -576,7 +594,7 @@ long lruv_block_new(
 		}
 		else
 		{
-			block = datum_get(cache->blocks, block_index);
+			block = lruv_cache_listed_block(cache, block_index);
 			if (page_index == block->first_page_index)
 			{
 				last_used_tick = block->last_used_tick;
